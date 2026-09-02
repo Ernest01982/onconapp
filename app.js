@@ -56,6 +56,7 @@ let locationWatchId = null;
 let cloudState = { configured:false, signedIn:false, email:'', syncing:false, lastSynced:null, error:'' };
 let deferredInstallPrompt = null;
 let appInstalled = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const isSamsungInternet = /SamsungBrowser/i.test(navigator.userAgent);
 
 const persistLocal = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 const save = () => { persistLocal(); scheduleCloudSync(); };
@@ -144,7 +145,7 @@ function homeView() {
   <main class="content">
     ${activeTrip ? `<section class="card driving-card"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Mileage tracking active</span></div><div class="travel-live"><div><strong data-trip-distance>${currentTripKm().toFixed(1)} km</strong><span>Distance</span></div><div><strong data-travel-timer>${duration(activeTrip.start)}</strong><span>Driving time</span></div></div><p>GPS points are saving on this device.</p><button class="btn btn-primary btn-block" data-screen="travel">Open mileage tracker</button></section>` : ''}
     ${active ? `<section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Visit in progress</span></div><div class="timer" data-timer>${duration(active.start)}</div><h2 style="margin:0 0 5px">${esc(customer(active.customerId)?.name)}</h2><p>${esc(customer(active.customerId)?.area)} · location saved</p><button class="btn btn-primary btn-block" data-screen="visit">Open visit</button></section>` : `<section class="card hero"><p class="eyebrow">Your day, made simple</p><h2>${pending.length ? `${pending.length} follow-ups. One clear plan.` : hasCustomers ? 'You’re all caught up.' : 'Add your first client.'}</h2><p>${pending.length ? `Start with ${esc(customer(pending[0].customerId)?.name)}, then keep moving.` : hasCustomers ? 'Start a visit when you arrive at your next customer.' : 'Save the venue and contact once, then every visit becomes quicker.'}</p><div class="hero-actions"><button class="btn btn-primary" data-action="${hasCustomers?'start-visit':'add-customer'}">${icon('plus')} ${hasCustomers?'Start visit':'Add first client'}</button><button class="btn btn-white" data-screen="assistant">${icon('spark')} Ask AI</button></div></section>`}
-    ${!appInstalled ? `<section class="card install-card"><div class="install-icon">${icon('download','icon-lg')}</div><div><strong>Put FieldFlow on your phone</strong><span>Install it like an app for quick access and offline capture.</span></div><button class="btn btn-secondary" data-action="install-app">${deferredInstallPrompt?'Install':'Show me how'}</button></section>` : ''}
+    ${!appInstalled ? `<section class="card install-card"><div class="install-icon">${icon('download','icon-lg')}</div><div><strong>Put FieldFlow on your phone</strong><span>${isSamsungInternet?'Use Chrome for a Play Protect-safe installation.':'Install it like an app for quick access and offline capture.'}</span></div><button class="btn btn-secondary" data-action="install-app">${isSamsungInternet?'Use Chrome':deferredInstallPrompt?'Install':'Show me how'}</button></section>` : ''}
     <div class="section-row"><h2>Today at a glance</h2><span class="offline-pill ${navigator.onLine?'':'offline'}">${storageLabel()}</span></div>
     <div class="quick-grid">
       <button class="quick-card" data-screen="activity" data-filter="tasks"><span class="quick-icon">${icon('list')}</span><div><strong>${pending.filter(t=>new Date(t.due)<=new Date(iso(0,23,59))).length} follow-ups</strong><span>need attention today</span></div></button>
@@ -303,7 +304,7 @@ function customerFormModal(customerId = null) {
 
 function settingsModal() {
   const syncText = cloudState.error ? `Needs attention: ${cloudState.error}` : cloudState.syncing ? 'Syncing now…' : cloudState.lastSynced ? `Last synced ${time(cloudState.lastSynced)}` : 'Ready to sync';
-  const installPanel = appInstalled ? `<div class="location-state">${icon('check')}<span>FieldFlow is installed on this device.</span></div>` : `<div class="card info-card"><h3>Install on this phone</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Add FieldFlow to your Apps screen for full-screen access and safer offline use.</p><button class="btn btn-primary btn-block" data-action="install-app">${icon('download')} ${deferredInstallPrompt?'Install FieldFlow':'Show installation steps'}</button></div>`;
+  const installPanel = appInstalled ? `<div class="location-state">${icon('check')}<span>FieldFlow is installed on this device.</span></div>` : `<div class="card info-card"><h3>Install on this phone</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">${isSamsungInternet?'For this Samsung, install through Chrome to avoid the outdated package warning.':'Add FieldFlow to your Apps screen for full-screen access and safer offline use.'}</p><button class="btn btn-primary btn-block" data-action="install-app">${icon('download')} ${isSamsungInternet?'Open safely in Chrome':deferredInstallPrompt?'Install FieldFlow':'Show installation steps'}</button></div>`;
   const cloudPanel = !cloudState.configured
     ? `<div class="card info-card"><h3>Cloud backup</h3><p style="margin:0;color:var(--muted);font-size:13px;line-height:1.5">Cloud connection is not configured on this device. Local capture still works.</p></div>`
     : cloudState.signedIn
@@ -313,10 +314,12 @@ function settingsModal() {
 }
 
 function installHelpModal() {
-  const samsung = /SamsungBrowser/i.test(navigator.userAgent);
-  const browserName = samsung ? 'Samsung Internet' : 'Chrome';
-  const menuStep = samsung ? 'Tap the menu (☰), choose Add page to, then Home screen.' : 'Tap the three-dot menu (⋮), then choose Install app or Add to Home screen.';
-  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Install FieldFlow"><div class="handle"></div><div class="modal-head"><h2>Install FieldFlow</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="install-guide-mark">${icon('download','icon-lg')}</div><h3 style="font-size:20px;margin:0 0 8px">Use it like a normal app</h3><p style="color:var(--muted);line-height:1.5;margin:0 0 18px">You are using ${browserName}. ${menuStep}</p><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>1</span><strong>Open the browser menu</strong></div><div class="info-line"><span>2</span><strong>Choose Install or Add to Home screen</strong></div><div class="info-line"><span>3</span><strong>Tap Install to confirm</strong></div></div><button class="btn btn-primary btn-block" data-action="close-modal">Got it</button></section></div>`;
+  if (isSamsungInternet) {
+    modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Install FieldFlow safely"><div class="handle"></div><div class="modal-head"><h2>Install safely</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="install-guide-mark">${icon('download','icon-lg')}</div><h3 style="font-size:20px;margin:0 0 8px">Use Google Chrome</h3><p style="color:var(--muted);line-height:1.5;margin:0 0 18px">Samsung Internet generated the older Android package shown in the Play Protect warning. Do not choose “Install anyway”. Open the same secure FieldFlow site in Chrome and install it there.</p><button class="btn btn-primary btn-block" data-action="open-in-chrome">Open FieldFlow in Chrome</button><button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="close-modal">Not now</button></section></div>`;
+    render();
+    return;
+  }
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Install FieldFlow"><div class="handle"></div><div class="modal-head"><h2>Install FieldFlow</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="install-guide-mark">${icon('download','icon-lg')}</div><h3 style="font-size:20px;margin:0 0 8px">Use it like a normal app</h3><p style="color:var(--muted);line-height:1.5;margin:0 0 18px">In Chrome, tap the three-dot menu (⋮), then choose Install app or Add to Home screen.</p><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>1</span><strong>Open the Chrome menu</strong></div><div class="info-line"><span>2</span><strong>Choose Install app</strong></div><div class="info-line"><span>3</span><strong>Tap Install to confirm</strong></div></div><button class="btn btn-primary btn-block" data-action="close-modal">Got it</button></section></div>`;
   render();
 }
 
@@ -455,7 +458,7 @@ document.addEventListener('click', async event => {
   else if(action==='cloud-sync'){target.disabled=true;await syncCloudNow(true);settingsModal();toast(cloudState.error?'Sync needs attention':'Cloud backup is up to date');}
   else if(action==='cloud-signout'){target.disabled=true;try{await signOutCloud();modal=null;render();toast('Signed out. Local data is still on this device.');}catch(error){toast(error.message);}}
   else if(action==='install-app'){
-    if(!deferredInstallPrompt){installHelpModal();return;}
+    if(isSamsungInternet||!deferredInstallPrompt){installHelpModal();return;}
     target.disabled=true;
     await deferredInstallPrompt.prompt();
     const choice=await deferredInstallPrompt.userChoice;
@@ -463,6 +466,11 @@ document.addEventListener('click', async event => {
     modal=null;
     render();
     toast(choice.outcome==='accepted'?'FieldFlow is being installed.':'Installation cancelled. You can install it later from your profile.');
+  }
+  else if(action==='open-in-chrome'){
+    const secureUrl='https://ernest01982.github.io/onconapp/';
+    const fallback=encodeURIComponent(secureUrl);
+    window.location.href=`intent://ernest01982.github.io/onconapp/#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${fallback};end`;
   }
   else if(action==='clear-crm-data'){if(!confirm('Clear all customers, visits, follow-ups and mileage? This also clears them from cloud backup and cannot be undone.'))return;const profile=clone(data.profile);const products=clone(data.products?.length?data.products:realProducts);data=clone(seed);data.profile=profile;data.products=products;save();modal=null;screen='home';render();toast('CRM activity cleared. Your real price list remains.');}
 });
@@ -505,7 +513,7 @@ function emailPriceList(){const listName=productFilter==='All'?'Complete portfol
 function emailReport(){const visits=data.visits.filter(v=>new Date(v.start)>new Date(Date.now()-7*DAY));const trips=data.travel.trips.filter(t=>new Date(t.start)>new Date(Date.now()-7*DAY));const km=trips.reduce((sum,t)=>sum+t.distanceKm,0);const mins=visits.reduce((n,v)=>n+(new Date(v.end)-new Date(v.start))/60000,0);const body=`Weekly field activity\n\nVisits: ${visits.length}\nCustomers seen: ${new Set(visits.map(v=>v.customerId)).size}\nTime in trade: ${Math.round(mins/60)} hours\nOpen follow-ups: ${data.tasks.filter(t=>!t.done).length}\nBusiness travel: ${km.toFixed(1)} km\nMileage rate: ${currency(data.travel.ratePerKm)} per km\nReimbursement claim: ${currency(reimbursement(km))}\nOpen opportunity value: ${currency(data.customers.reduce((s,c)=>s+c.value,0))}`;window.location.href=`mailto:?subject=${encodeURIComponent('Weekly field sales activity and mileage')}&body=${encodeURIComponent(body)}`;}
 
 window.addEventListener('online',()=>{render();syncCloudNow(false);});window.addEventListener('offline',render);
-window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=event;if(screen==='home'||modal?.includes('data-modal="settings"'))render();});
+window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=isSamsungInternet?null:event;if(screen==='home'||modal?.includes('data-modal="settings"'))render();});
 window.addEventListener('appinstalled',()=>{appInstalled=true;deferredInstallPrompt=null;modal=null;render();toast('FieldFlow is installed and ready.');});
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(registration=>registration.update()).catch(()=>{}));
 render();

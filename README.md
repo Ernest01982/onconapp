@@ -12,7 +12,7 @@ FieldFlow is a working, mobile-first field sales CRM prototype designed for a Sa
 
 ## Install on a Samsung phone
 
-1. Open `https://ernest01982.github.io/onconapp/` in Chrome or Samsung Internet.
+1. Open `https://ernest01982.github.io/onconapp/` in Google Chrome. On current Samsung devices, use Chrome for installation; Samsung Internet may generate an outdated Android package that Play Protect blocks.
 2. Tap **Install** in the FieldFlow card on the Today screen. If the browser does not show the native prompt yet, the app displays the exact browser-menu steps.
 3. Confirm **Install** or **Add to Home screen**.
 4. Open FieldFlow from the phone’s Apps or Home screen, then use the profile button to create an account and enable cloud backup.
