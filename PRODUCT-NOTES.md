@@ -53,7 +53,7 @@ Location is optional at creation. If a client has no saved coordinates, the firs
 
 ### Assisted automatic visit logging
 
-The safest first automation is a suggestion, not full passive tracking. The Android app can use a geofence around known venues, dwell time and motion state to prompt: “You appear to be at Copper Bar. Start a visit?” On departure it can prompt to end the active visit. This preserves control, reduces false visits and makes consent understandable. A later organisation policy may enable a work-hours-only background timeline with visible status and pause controls.
+The safest first automation is a suggestion, not full passive tracking. The Android app can use a geofence around known venues, dwell time and motion state to prompt: “You appear to be at a saved client. Start a visit?” On departure it can prompt to end the active visit. This preserves control, reduces false visits and makes consent understandable. A later organisation policy may enable a work-hours-only background timeline with visible status and pause controls.
 
 ### Mileage and reimbursement
 

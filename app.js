@@ -10,27 +10,9 @@ const iso = (offset = 0, hour = 9, minute = 0) => {
 
 const seed = {
   profile: { name: 'Ernest', initials: 'ER', territory: 'Johannesburg North' },
-  customers: [
-    { id:'c1', name:'The Local Grill', area:'Parktown North', type:'Restaurant', contact:'Thandi Molefe', role:'General Manager', email:'thandi@example.com', phone:'+27 82 555 0142', lastVisit:iso(-2,11), opportunity:'Menu listing', value:18500, lat:-26.1448, lng:28.0274 },
-    { id:'c2', name:'Foundry Café', area:'Parkhurst', type:'Café', contact:'Megan van Wyk', role:'Owner', email:'megan@example.com', phone:'+27 72 555 0118', lastVisit:iso(-9,10), opportunity:'Seasonal range', value:8200, lat:-26.1379, lng:28.0201 },
-    { id:'c3', name:'Copper Bar', area:'Rosebank', type:'Bar', contact:'Kagiso Dlamini', role:'Beverage Manager', email:'kagiso@example.com', phone:'+27 83 555 0169', lastVisit:iso(-18,15), opportunity:'Premium pour', value:32000, lat:-26.1454, lng:28.0419 },
-    { id:'c4', name:'Olive & Oak', area:'Sandton', type:'Restaurant', contact:'Naledi Khumalo', role:'Buyer', email:'naledi@example.com', phone:'+27 79 555 0191', lastVisit:iso(-32,12), opportunity:'New account', value:24000, lat:-26.1076, lng:28.0567 },
-    { id:'c5', name:'Braam Market', area:'Braamfontein', type:'Retail', contact:'Sipho Nene', role:'Store Manager', email:'sipho@example.com', phone:'+27 84 555 0133', lastVisit:iso(-5,14), opportunity:'Range expansion', value:12600, lat:-26.1929, lng:28.0305 }
-  ],
-  visits: [
-    { id:'v1', customerId:'c1', start:iso(-2,11,10), end:iso(-2,11,52), lat:-26.1448, lng:28.0274, summary:'Reviewed summer menu and agreed to trial the Excelsior range.', products:['Excelsior Classic Sauvignon Blanc','Simonsig Kaapse Vonkel Brut'], outcome:'Trial agreed', nextAction:'Send updated price list and trial order form', followUp:iso(1,9), source:'voice' },
-    { id:'v2', customerId:'c5', start:iso(-5,14,5), end:iso(-5,14,38), lat:-26.1929, lng:28.0305, summary:'Discussed shelf position and weekend stock levels.', products:['Buzz Ballz - Mango Chilli'], outcome:'Reorder likely', nextAction:'Confirm Saturday delivery capacity', followUp:iso(0,13), source:'voice' },
-    { id:'v3', customerId:'c2', start:iso(-9,10,0), end:iso(-9,10,47), lat:-26.1379, lng:28.0201, summary:'Introduced the alcohol-free Ginologist range.', products:['Ginologist - Alc-Free Floral','Ginologist - Alc- Free London Dry'], outcome:'Samples requested', nextAction:'Drop sample case', followUp:iso(2,10), source:'typed' },
-    { id:'v4', customerId:'c3', start:iso(-18,15,15), end:iso(-18,16,2), lat:-26.1454, lng:28.0419, summary:'Kagiso is interested in a premium by-the-glass activation.', products:['Simonsig Tiara'], outcome:'Proposal needed', nextAction:'Build activation proposal', followUp:iso(-1,9), source:'voice' },
-    { id:'v5', customerId:'c4', start:iso(-32,12,10), end:iso(-32,12,36), lat:-26.1076, lng:28.0567, summary:'First introduction. Buyer asked for the full portfolio and trade terms.', products:['Full portfolio'], outcome:'Warm opportunity', nextAction:'Book a tasting', followUp:iso(3,11), source:'voice' }
-  ],
-  tasks: [
-    { id:'t1', customerId:'c5', title:'Confirm Saturday delivery capacity', due:iso(0,13), done:false, priority:'Today' },
-    { id:'t2', customerId:'c3', title:'Build premium activation proposal', due:iso(-1,9), done:false, priority:'Overdue' },
-    { id:'t3', customerId:'c1', title:'Send updated price list', due:iso(1,9), done:false, priority:'Next' },
-    { id:'t4', customerId:'c2', title:'Drop seasonal sample case', due:iso(2,10), done:false, priority:'Next' },
-    { id:'t5', customerId:'c5', title:'Update shelf photos', due:iso(-3,16), done:true, priority:'Done' }
-  ],
+  customers: [],
+  visits: [],
+  tasks: [],
   travel: {
     ratePerKm: 4.90,
     activeTrip: null,
@@ -39,7 +21,7 @@ const seed = {
   },
   products: realProducts,
   activeVisit: null,
-  chat: [{ role:'ai', text:'Morning, Ernest. You have 2 follow-ups needing attention. Ask me what to prioritise or what happened at a customer.' }]
+  chat: [{ role:'ai', text:'Welcome to FieldFlow. Add your first client, then I can help you plan visits and follow-ups.' }]
 };
 
 const STORAGE_KEY = 'fieldflow-prototype-v3';
@@ -48,7 +30,21 @@ const loadState = () => {
   try { return { ...clone(seed), ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; }
   catch { return clone(seed); }
 };
-let data = loadState();
+const LEGACY_DEMO_CUSTOMERS = new Set(['c1','c2','c3','c4','c5']);
+const DEMO_CLEANUP_KEY = 'fieldflow-demo-cleanup-v1';
+const removeLegacyDemoData = loaded => {
+  if (localStorage.getItem(DEMO_CLEANUP_KEY)) return loaded;
+  const cleaned = clone(loaded);
+  cleaned.customers = (cleaned.customers || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.id));
+  cleaned.visits = (cleaned.visits || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.customerId));
+  cleaned.tasks = (cleaned.tasks || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.customerId));
+  if (LEGACY_DEMO_CUSTOMERS.has(cleaned.activeVisit?.customerId)) cleaned.activeVisit = null;
+  if (!cleaned.customers.length && !cleaned.visits.length && !cleaned.tasks.length) cleaned.chat = clone(seed.chat);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+  localStorage.setItem(DEMO_CLEANUP_KEY, 'complete');
+  return cleaned;
+};
+let data = removeLegacyDemoData(loadState());
 let screen = data.activeVisit ? 'visit' : 'home';
 let filter = 'All';
 let productFilter = 'All';
@@ -142,11 +138,12 @@ function homeView() {
   const todayVisits = data.visits.filter(v => new Date(v.start).toDateString() === now.toDateString());
   const active = data.activeVisit;
   const activeTrip = data.travel.activeTrip;
+  const hasCustomers = data.customers.length > 0;
   const todayKm = todayTrips().reduce((sum,trip)=>sum+trip.distanceKm,0);
   return `${topbar(`Good ${now.getHours()<12?'morning':now.getHours()<18?'afternoon':'evening'}`, now.toLocaleDateString('en-ZA',{weekday:'long',day:'numeric',month:'long'}))}
   <main class="content">
     ${activeTrip ? `<section class="card driving-card"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Mileage tracking active</span></div><div class="travel-live"><div><strong data-trip-distance>${currentTripKm().toFixed(1)} km</strong><span>Distance</span></div><div><strong data-travel-timer>${duration(activeTrip.start)}</strong><span>Driving time</span></div></div><p>GPS points are saving on this device.</p><button class="btn btn-primary btn-block" data-screen="travel">Open mileage tracker</button></section>` : ''}
-    ${active ? `<section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Visit in progress</span></div><div class="timer" data-timer>${duration(active.start)}</div><h2 style="margin:0 0 5px">${esc(customer(active.customerId)?.name)}</h2><p>${esc(customer(active.customerId)?.area)} · location saved</p><button class="btn btn-primary btn-block" data-screen="visit">Open visit</button></section>` : `<section class="card hero"><p class="eyebrow">Your day, made simple</p><h2>${pending.length ? `${pending.length} follow-ups. One clear plan.` : 'You’re all caught up.'}</h2><p>${pending.length ? `Start with ${esc(customer(pending[0].customerId)?.name)}, then keep moving.` : 'Start a visit when you arrive at your next customer.'}</p><div class="hero-actions"><button class="btn btn-primary" data-action="start-visit">${icon('plus')} Start visit</button><button class="btn btn-white" data-screen="assistant">${icon('spark')} Ask AI</button></div></section>`}
+    ${active ? `<section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Visit in progress</span></div><div class="timer" data-timer>${duration(active.start)}</div><h2 style="margin:0 0 5px">${esc(customer(active.customerId)?.name)}</h2><p>${esc(customer(active.customerId)?.area)} · location saved</p><button class="btn btn-primary btn-block" data-screen="visit">Open visit</button></section>` : `<section class="card hero"><p class="eyebrow">Your day, made simple</p><h2>${pending.length ? `${pending.length} follow-ups. One clear plan.` : hasCustomers ? 'You’re all caught up.' : 'Add your first client.'}</h2><p>${pending.length ? `Start with ${esc(customer(pending[0].customerId)?.name)}, then keep moving.` : hasCustomers ? 'Start a visit when you arrive at your next customer.' : 'Save the venue and contact once, then every visit becomes quicker.'}</p><div class="hero-actions"><button class="btn btn-primary" data-action="${hasCustomers?'start-visit':'add-customer'}">${icon('plus')} ${hasCustomers?'Start visit':'Add first client'}</button><button class="btn btn-white" data-screen="assistant">${icon('spark')} Ask AI</button></div></section>`}
     ${!appInstalled ? `<section class="card install-card"><div class="install-icon">${icon('download','icon-lg')}</div><div><strong>Put FieldFlow on your phone</strong><span>Install it like an app for quick access and offline capture.</span></div><button class="btn btn-secondary" data-action="install-app">${deferredInstallPrompt?'Install':'Show me how'}</button></section>` : ''}
     <div class="section-row"><h2>Today at a glance</h2><span class="offline-pill ${navigator.onLine?'':'offline'}">${storageLabel()}</span></div>
     <div class="quick-grid">
@@ -225,14 +222,14 @@ function reportsView() {
 }
 
 function assistantView() {
-  return `${topbar('Assistant','Your field co-pilot')}<main class="content"><section class="card assistant-hero"><div class="assistant-mark">${icon('spark','icon-lg')}</div><h2>What do you need?</h2><p>I can use your customers, visits, mileage and follow-ups to help plan the day.</p></section><div class="suggestions">${['Who needs follow-up?','What is my mileage claim?','Who have I not visited recently?','What happened at The Local Grill?','What should I do today?'].map(q=>`<button class="suggestion" data-action="ask" data-value="${esc(q)}">${esc(q)}</button>`).join('')}</div><div class="chat" id="chat">${data.chat.map(m=>`<div class="bubble ${m.role}">${esc(m.text)}</div>`).join('')}</div><form class="ask-row" id="ask-form"><input class="field" id="ask-input" placeholder="Ask about your day…" autocomplete="off"><button class="btn btn-primary send-btn" aria-label="Send">${icon('send')}</button></form></main>${nav()}`;
+  return `${topbar('Assistant','Your field co-pilot')}<main class="content"><section class="card assistant-hero"><div class="assistant-mark">${icon('spark','icon-lg')}</div><h2>What do you need?</h2><p>I can use your customers, visits, mileage and follow-ups to help plan the day.</p></section><div class="suggestions">${['Who needs follow-up?','What is my mileage claim?','Who have I not visited recently?','What happened at my last visit?','What should I do today?'].map(q=>`<button class="suggestion" data-action="ask" data-value="${esc(q)}">${esc(q)}</button>`).join('')}</div><div class="chat" id="chat">${data.chat.map(m=>`<div class="bubble ${m.role}">${esc(m.text)}</div>`).join('')}</div><form class="ask-row" id="ask-form"><input class="field" id="ask-input" placeholder="Ask about your day…" autocomplete="off"><button class="btn btn-primary send-btn" aria-label="Send">${icon('send')}</button></form></main>${nav()}`;
 }
 
 function visitView() {
   if (!data.activeVisit) { screen='home'; return homeView(); }
   const c = customer(data.activeVisit.customerId);
   const structured = structureNote(data.activeVisit.note || '');
-  return `${topbar('Active visit','Capture while it’s fresh')}<main class="content"><section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">At customer</span></div><div class="timer" data-timer>${duration(data.activeVisit.start)}</div><h2 style="margin:0 0 5px">${esc(c?.name)}</h2><p>${esc(c?.area)} · ${data.activeVisit.locationLabel||'location saved'}</p></section><div class="section-row"><h2>Visit note</h2><span class="status">Saved offline</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap and speak naturally, or type below</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" placeholder="Example: Thandi agreed to trial Simonsig Tiara. Send the new price list tomorrow…">${esc(data.activeVisit.note||'')}</textarea>${data.activeVisit.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section><button class="btn btn-danger btn-block" style="margin-top:14px" data-action="end-visit">End visit & save</button></main>${nav()}`;
+  return `${topbar('Active visit','Capture while it’s fresh')}<main class="content"><section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">At customer</span></div><div class="timer" data-timer>${duration(data.activeVisit.start)}</div><h2 style="margin:0 0 5px">${esc(c?.name)}</h2><p>${esc(c?.area)} · ${data.activeVisit.locationLabel||'location saved'}</p></section><div class="section-row"><h2>Visit note</h2><span class="status">Saved offline</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap and speak naturally, or type below</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" placeholder="Example: The buyer agreed to trial the new range. Send the price list tomorrow…">${esc(data.activeVisit.note||'')}</textarea>${data.activeVisit.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section><button class="btn btn-danger btn-block" style="margin-top:14px" data-action="end-visit">End visit & save</button></main>${nav()}`;
 }
 
 function structuredPreview(s) {
@@ -269,6 +266,7 @@ function customerDetail(id) {
 
 function startVisitModal(prefill) {
   if (data.activeVisit) { screen='visit'; modal=null; return render(); }
+  if (!data.customers.length) { customerFormModal(); toast('Add your first client before starting a visit.'); return; }
   let selected=prefill||(data.travel.lastPosition?nearestCustomer(data.travel.lastPosition)?.customer.id:null)||data.customers[0]?.id;
   const paint = (locationText='Location will be captured when you start') => {
     modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Start a visit"><div class="handle"></div><div class="modal-head"><h2>Start visit</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><p style="color:var(--muted);margin:-7px 0 15px">Choose where you are. We’ll handle the rest.</p><div class="choice-list">${data.customers.map(c=>{const km=data.travel.lastPosition?geoDistanceKm(data.travel.lastPosition,{lat:c.lat,lng:c.lng}):null;return `<button class="choice ${selected===c.id?'selected':''}" data-action="select-visit-customer" data-id="${c.id}"><div class="dot-icon">${initials(c.name)}</div><div><strong>${esc(c.name)}</strong><span>${esc(c.area)} · ${km!=null?`${km<1?`${Math.round(km*1000)} m`:`${km.toFixed(1)} km`} away`:esc(c.contact)}</span></div></button>`}).join('')}</div><div class="location-state">${icon('pin')}<span>${esc(locationText)}</span></div><button class="btn btn-primary btn-block" data-action="confirm-start" data-id="${selected}">${icon('plus')} Start visit now</button></section></div>`; render();
@@ -277,6 +275,7 @@ function startVisitModal(prefill) {
 }
 
 function taskModal() {
+  if (!data.customers.length) { customerFormModal(); toast('Add a client before creating a follow-up.'); return; }
   modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="task-form"><div class="handle"></div><div class="modal-head"><h2>New follow-up</h2><button type="button" class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="form-group"><label>Customer</label><select class="field" name="customerId">${data.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div><div class="form-group"><label>What needs to happen?</label><input class="field" name="title" required placeholder="Call buyer about trial order"></div><div class="form-group"><label>Due date</label><input class="field" name="due" type="date" required value="${iso(1).slice(0,10)}"></div><button class="btn btn-primary btn-block">Save follow-up</button></form></div>`; render();
 }
 
@@ -310,7 +309,7 @@ function settingsModal() {
     : cloudState.signedIn
       ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div></div>`
       : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Sign in to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="6" required placeholder="At least 6 characters"></div><div class="form-grid"><button class="btn btn-primary" type="submit" name="intent" value="sign-in">Sign in</button><button class="btn btn-secondary" type="submit" name="intent" value="create">Create account</button></div>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
-  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div></div>${cloudPanel}<p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block" data-action="reset-demo">${icon('refresh')} Restore demo data</button></section></div>`; render();
+  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div></div>${cloudPanel}<p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
 }
 
 function installHelpModal() {
@@ -340,8 +339,9 @@ function answerQuestion(q) {
   const lower=q.toLowerCase(); const pending=data.tasks.filter(t=>!t.done).sort((a,b)=>new Date(a.due)-new Date(b.due));
   if (/mileage|kilomet|travel|reimburse|claim/.test(lower)) { const weekTrips=data.travel.trips.filter(t=>new Date(t.start)>new Date(Date.now()-7*DAY));const km=weekTrips.reduce((sum,t)=>sum+t.distanceKm,0);return `Your last 7 days total ${km.toFixed(1)} km. At ${currency(data.travel.ratePerKm)} per km, the reimbursement is ${currency(reimbursement(km))}.`; }
   if (/follow.?up|due|overdue/.test(lower)) return pending.length ? `You have ${pending.length} open follow-ups. Start with ${customer(pending[0].customerId)?.name}: ${pending[0].title.toLowerCase()} (${dayLabel(pending[0].due)}).` : 'You have no open follow-ups.';
-  if (/not visited|recently|neglect/.test(lower)) { const sorted=[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit)); return `${sorted[0].name} needs a visit most — last seen ${dayLabel(sorted[0].lastVisit)}. ${sorted[1].name} is next.`; }
-  if (/today|prioriti|plan|do next/.test(lower)) return pending.length ? `Today: 1) ${pending[0].title} for ${customer(pending[0].customerId)?.name}. 2) Visit ${[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit))[0].name}. 3) Clear any new notes before you finish.` : 'Your follow-ups are clear. Prioritise the customer with the oldest visit date.';
+  if (/not visited|recently|neglect/.test(lower)) { const sorted=[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit)); if(!sorted.length)return 'Add your first client and I will track who has not been visited.'; return sorted.length===1?`${sorted[0].name} has ${sorted[0].lastVisit?`not been visited since ${dayLabel(sorted[0].lastVisit)}`:'not been visited yet'}.`:`${sorted[0].name} needs a visit most — last seen ${dayLabel(sorted[0].lastVisit)}. ${sorted[1].name} is next.`; }
+  if (/today|prioriti|plan|do next/.test(lower)) { if(!data.customers.length)return 'Start by adding your first client. Then I can build your daily visit and follow-up plan.'; return pending.length ? `Today: 1) ${pending[0].title} for ${customer(pending[0].customerId)?.name}. 2) Visit ${[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit))[0].name}. 3) Clear any new notes before you finish.` : 'Your follow-ups are clear. Prioritise the customer with the oldest visit date.'; }
+  if (/last visit|what happened/.test(lower)) { const visit=[...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start))[0]; return visit?`Your last visit was to ${customer(visit.customerId)?.name||'a client'} on ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction||'None recorded'}.`:'You have no recorded visits yet.'; }
   const named=data.customers.find(c=>lower.includes(c.name.toLowerCase())||lower.includes(c.name.split(' ')[0].toLowerCase()));
   if (named) { const visit=data.visits.filter(v=>v.customerId===named.id).sort((a,b)=>new Date(b.start)-new Date(a.start))[0]; return visit ? `Last visit to ${named.name} was ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction}.` : `${named.name} has no recorded visits yet.`; }
   if (/product|discussed|range/.test(lower)) { const counts={}; data.visits.flatMap(v=>v.products).forEach(p=>counts[p]=(counts[p]||0)+1); const top=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]; return top?`${top[0]} is the most discussed product in your recorded visits (${top[1]} mentions).`:'No product discussions are recorded yet.'; }
@@ -464,7 +464,7 @@ document.addEventListener('click', async event => {
     render();
     toast(choice.outcome==='accepted'?'FieldFlow is being installed.':'Installation cancelled. You can install it later from your profile.');
   }
-  else if(action==='reset-demo'){if(!confirm('Restore the original demo data? This replaces the current customers, visits and mileage on this device and in cloud backup.'))return;data=clone(seed);save();modal=null;screen='home';render();toast('Demo data restored');}
+  else if(action==='clear-crm-data'){if(!confirm('Clear all customers, visits, follow-ups and mileage? This also clears them from cloud backup and cannot be undone.'))return;const profile=clone(data.profile);const products=clone(data.products?.length?data.products:realProducts);data=clone(seed);data.profile=profile;data.products=products;save();modal=null;screen='home';render();toast('CRM activity cleared. Your real price list remains.');}
 });
 
 document.addEventListener('input', event => {

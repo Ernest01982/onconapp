@@ -19,7 +19,7 @@ FieldFlow is a working, mobile-first field sales CRM prototype designed for a Sa
 
 The production site is served over HTTPS and includes a service worker, 192×192 and 512×512 Android icons, a maskable icon, standalone display mode and an offline app shell.
 
-The prototype starts with realistic sample customers, visits and tasks plus the imported Niew Beverages On Con catalogue effective 1 March 2026. Use the profile button in the top-right corner to restore the original demo data at any time.
+The app starts with an empty CRM and the imported Niew Beverages On Con catalogue effective 1 March 2026. Add real clients as you begin testing; no fictional customers, visits or follow-ups are included.
 
 ## What works
 
