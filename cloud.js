@@ -12,6 +12,7 @@ const client = configured
 let session = null;
 let getLocalData = () => null;
 let setLocalData = () => {};
+let onIdentityChange = async () => {};
 let onStatus = () => {};
 let syncTimer = null;
 let syncing = false;
@@ -19,6 +20,16 @@ let lastSynced = null;
 let lastError = '';
 let lastHashes = {};
 let handledUserId = null;
+let activeUserId;
+let identityGeneration = 0;
+let identityReady = false;
+let sessionChangeChain = Promise.resolve();
+
+class StaleIdentityError extends Error {}
+
+function assertCurrentIdentity(userId, generation) {
+  if (!identityReady || activeUserId !== userId || identityGeneration !== generation) throw new StaleIdentityError();
+}
 
 const hash = value => JSON.stringify(value);
 const numberOrNull = value => value == null ? null : Number(value);
@@ -141,25 +152,29 @@ function rowsFor(data, userId) {
   };
 }
 
-async function syncRows(table, rows, userId, force = false) {
+async function syncRows(table, rows, userId, force = false, generation = identityGeneration) {
   const nextHash = hash(rows);
   if (!force && lastHashes[table] === nextHash) return;
+  assertCurrentIdentity(userId, generation);
 
   const { data: existing, error: readError } = await client
     .from(table)
     .select('id')
     .eq('user_id', userId);
   if (readError) throw readError;
+  assertCurrentIdentity(userId, generation);
 
   const nextIds = new Set(rows.map(row => row.id));
   const removedIds = (existing || []).map(row => row.id).filter(id => !nextIds.has(id));
   if (removedIds.length) {
     const { error } = await client.from(table).delete().eq('user_id', userId).in('id', removedIds);
     if (error) throw error;
+    assertCurrentIdentity(userId, generation);
   }
   if (rows.length) {
     const { error } = await client.from(table).upsert(rows, { onConflict: 'user_id,id' });
     if (error) throw error;
+    assertCurrentIdentity(userId, generation);
   }
   lastHashes[table] = nextHash;
 }
@@ -167,11 +182,13 @@ async function syncRows(table, rows, userId, force = false) {
 export async function syncCloudNow(force = false) {
   const data = getLocalData();
   const userId = session?.user?.id;
-  if (!configured || !userId || !data || syncing || !navigator.onLine) return false;
+  const generation = identityGeneration;
+  if (!configured || !identityReady || !userId || !data || syncing || !navigator.onLine) return false;
 
   syncing = true;
   notify({ error: '' });
   try {
+    assertCurrentIdentity(userId, generation);
     const profile = {
       user_id: userId,
       display_name: data.profile?.name || '',
@@ -183,17 +200,19 @@ export async function syncCloudNow(force = false) {
     if (force || lastHashes.profiles !== profileHash) {
       const { error } = await client.from('profiles').upsert(profile, { onConflict: 'user_id' });
       if (error) throw error;
+      assertCurrentIdentity(userId, generation);
       lastHashes.profiles = profileHash;
     }
 
     const tables = rowsFor(data, userId);
-    await syncRows('customers', tables.customers, userId, force);
+    await syncRows('customers', tables.customers, userId, force, generation);
     await Promise.all([
-      syncRows('visits', tables.visits, userId, force),
-      syncRows('tasks', tables.tasks, userId, force),
-      syncRows('products', tables.products, userId, force),
-      syncRows('travel_trips', tables.travel_trips, userId, force)
+      syncRows('visits', tables.visits, userId, force, generation),
+      syncRows('tasks', tables.tasks, userId, force, generation),
+      syncRows('products', tables.products, userId, force, generation),
+      syncRows('travel_trips', tables.travel_trips, userId, force, generation)
     ]);
+    assertCurrentIdentity(userId, generation);
 
     const appState = {
       user_id: userId,
@@ -206,12 +225,14 @@ export async function syncCloudNow(force = false) {
     if (force || lastHashes.app_state !== appStateHash) {
       const { error } = await client.from('app_state').upsert(appState, { onConflict: 'user_id' });
       if (error) throw error;
+      assertCurrentIdentity(userId, generation);
       lastHashes.app_state = appStateHash;
     }
 
     lastSynced = new Date().toISOString();
     return true;
   } catch (error) {
+    if (error instanceof StaleIdentityError) return false;
     lastError = error?.message || 'Cloud sync failed';
     return false;
   } finally {
@@ -248,12 +269,14 @@ function fromTrip(row) {
 
 async function loadRemoteOrSeed() {
   const userId = session?.user?.id;
+  const generation = identityGeneration;
   if (!userId) return;
   syncing = true;
   notify({ error: '' });
   try {
     const profileResult = await client.from('profiles').select('*').eq('user_id', userId).maybeSingle();
     if (profileResult.error) throw profileResult.error;
+    assertCurrentIdentity(userId, generation);
     if (!profileResult.data) {
       syncing = false;
       await syncCloudNow(true);
@@ -270,6 +293,7 @@ async function loadRemoteOrSeed() {
     ]);
     const failed = [customers, visits, tasks, products, trips, appState].find(result => result.error);
     if (failed) throw failed.error;
+    assertCurrentIdentity(userId, generation);
 
     const current = getLocalData();
     const remote = {
@@ -288,6 +312,7 @@ async function loadRemoteOrSeed() {
       activeVisit: appState.data?.active_visit || null,
       chat: appState.data?.chat?.length ? appState.data.chat : current.chat
     };
+    assertCurrentIdentity(userId, generation);
     setLocalData(remote);
     const normalized = rowsFor(remote, userId);
     lastHashes = {
@@ -301,6 +326,7 @@ async function loadRemoteOrSeed() {
     };
     lastSynced = new Date().toISOString();
   } catch (error) {
+    if (error instanceof StaleIdentityError) return;
     lastError = error?.message || 'Could not load cloud data';
   } finally {
     syncing = false;
@@ -309,11 +335,22 @@ async function loadRemoteOrSeed() {
 }
 
 async function handleSession(nextSession) {
+  const nextUserId = nextSession?.user?.id || null;
   session = nextSession;
-  notify({ error: '' });
-  if (!session?.user) {
+  if (activeUserId !== nextUserId) {
+    identityReady = false;
+    clearTimeout(syncTimer);
+    syncTimer = null;
     handledUserId = null;
     lastHashes = {};
+    lastSynced = null;
+    activeUserId = nextUserId;
+    identityGeneration += 1;
+    await onIdentityChange(session?.user || null);
+    identityReady = true;
+  }
+  notify({ error: '' });
+  if (!session?.user) {
     return;
   }
   if (handledUserId === session.user.id) return;
@@ -321,18 +358,29 @@ async function handleSession(nextSession) {
   await loadRemoteOrSeed();
 }
 
+function queueSessionChange(nextSession) {
+  sessionChangeChain = sessionChangeChain
+    .then(() => handleSession(nextSession))
+    .catch(error => notify({ error:error?.message || 'Could not change cloud account' }));
+  return sessionChangeChain;
+}
+
 export async function initializeCloud(options) {
   getLocalData = options.getData;
   setLocalData = options.setData;
+  onIdentityChange = options.onIdentityChange || onIdentityChange;
   onStatus = options.onStatus;
   notify();
-  if (!configured) return;
+  if (!configured) {
+    await handleSession(null);
+    return;
+  }
 
   const { data, error } = await client.auth.getSession();
   if (error) notify({ error:error.message });
   await handleSession(data?.session || null);
   client.auth.onAuthStateChange((_event, nextSession) => {
-    queueMicrotask(() => handleSession(nextSession));
+    queueMicrotask(() => queueSessionChange(nextSession));
   });
 }
 
@@ -342,19 +390,9 @@ export async function signInWithEmail(email, password) {
   if (error) throw error;
 }
 
-export async function createAccount(email, password) {
-  if (!client) throw new Error('Cloud connection is not configured on this device.');
-  const { data, error } = await client.auth.signUp({
-    email,
-    password,
-    options: { emailRedirectTo: new URL('.', window.location.href).href }
-  });
-  if (error) throw error;
-  return { needsConfirmation: !data.session };
-}
-
 export async function signOutCloud() {
   if (!client) return;
   const { error } = await client.auth.signOut();
   if (error) throw error;
+  await queueSessionChange(null);
 }

@@ -76,7 +76,7 @@ Daily, weekly and monthly aggregates should be computed from completed visits an
 
 ## Architecture path
 
-The current OnconApp Supabase project is the first production-shaped backend foundation. Seven public tables are exposed only to authenticated users, every table has Row Level Security, and every policy checks `auth.uid()` against the row owner. Anonymous access is revoked and authenticated grants are explicit. The app always writes locally first, then synchronizes changed collections after sign-in or when connectivity returns. This first sync uses last-write-wins at collection level; record versioning and conflict prompts remain a pilot hardening task.
+The current OnconApp Supabase project is the first production-shaped backend foundation. Seven CRM tables are exposed only to authenticated users, every table has Row Level Security, and every policy checks `auth.uid()` against the row owner. Anonymous access is revoked and authenticated grants are explicit. A separate deny-by-default quota ledger, row-count limits, a 200 MB per-user approximate payload budget, and server-side text/array/JSON limits protect the shared project from unbounded direct API writes. The app always writes locally first, then synchronizes changed collections after sign-in or when connectivity returns. Guest and account workspaces are separated on-device, sign-out locks the account workspace, and identity-generation checks stop stale sync or hydration work after an account change. This first sync uses last-write-wins at collection level; record versioning and conflict prompts remain a pilot hardening task.
 
 ### Stage 1 — current zero-cost prototype
 

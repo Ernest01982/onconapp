@@ -10,12 +10,14 @@ FieldFlow is a working, mobile-first field sales CRM prototype designed for a Sa
 4. Open `http://127.0.0.1:4173` in a browser.
 5. On Android, use the browser menu’s **Add to Home screen** option to test the installed PWA experience.
 
+For the pilot cloud account, create the intended user in **Supabase Dashboard → Authentication → Users → Add user**. Keep public signup disabled in the project's Auth settings; the app intentionally provides sign-in only. Guest capture remains available before cloud access is configured.
+
 ## Install on a Samsung phone
 
 1. Open `https://ernest01982.github.io/onconapp/` in Google Chrome. On current Samsung devices, use Chrome for installation; Samsung Internet may generate an outdated Android package that Play Protect blocks.
 2. Tap **Install** in the FieldFlow card on the Today screen. If the browser does not show the native prompt yet, the app displays the exact browser-menu steps.
 3. Confirm **Install** or **Add to Home screen**.
-4. Open FieldFlow from the phone’s Apps or Home screen, then use the profile button to create an account and enable cloud backup.
+4. Open FieldFlow from the phone’s Apps or Home screen. The pilot works immediately on the device; use the profile button to sign in with an invited account when cloud backup is enabled.
 
 The production site is served over HTTPS and includes a service worker, 192×192 and 512×512 Android icons, a maskable icon, standalone display mode and an offline app shell.
 
@@ -41,12 +43,12 @@ The app starts with an empty CRM and the imported Niew Beverages On Con catalogu
 - Daily work overview and weekly management report
 - A local assistant that answers common planning and customer-history questions
 - Service-worker caching and local-first persistence for offline-safe capture
-- Email/password account creation and sign-in
+- Invitation-only email/password sign-in for the single-user pilot
 - Secure Supabase backup and cross-device sync protected by per-user Row Level Security
 
 ## Prototype boundaries
 
-The app saves to the browser immediately and works without an account. When a user signs in, normalized customer, visit, task, product and travel records sync to Supabase. Its “AI” note extraction and assistant are intentionally deterministic for now so the core workflow can be tested without an AI API key. The price-list and report buttons prepare an email through the device’s configured mail app; direct Microsoft 365 sending is an integration step described in [PRODUCT-NOTES.md](PRODUCT-NOTES.md).
+The app saves to the browser immediately and works without an account. Guest data and each signed-in user's data are stored in separate device workspaces, and signing out locks the account workspace. When a user signs in, normalized customer, visit, task, product and travel records sync to Supabase. Its “AI” note extraction and assistant are intentionally deterministic for now so the core workflow can be tested without an AI API key. The price-list and report buttons prepare an email through the device’s configured mail app; direct Microsoft 365 sending is an integration step described in [PRODUCT-NOTES.md](PRODUCT-NOTES.md).
 
 The PWA uses the device’s native browser location permission. Keep the app open while recording a trip because browsers can pause foreground GPS when the screen is locked. The commercial native Android stage uses a foreground location service for reliable, visible background mileage capture.
 

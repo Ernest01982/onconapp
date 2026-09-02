@@ -1,5 +1,18 @@
 import { realProducts } from './products-data.js';
-import { createAccount, initializeCloud, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
+import { initializeCloud, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
+import {
+  cloneWorkspace,
+  getLegacyDecision,
+  getLegacyOwner,
+  hasWorkspace,
+  importGuestWorkspace,
+  migrateLegacyWorkspaceToGuest,
+  readWorkspace,
+  recordLegacyDecision,
+  reserveLegacyWorkspace,
+  workspaceKeyFor,
+  writeWorkspace
+} from './workspace.js';
 
 const DAY = 86_400_000;
 const now = new Date();
@@ -24,27 +37,21 @@ const seed = {
   chat: [{ role:'ai', text:'Welcome to FieldFlow. Add your first client, then I can help you plan visits and follow-ups.' }]
 };
 
-const STORAGE_KEY = 'fieldflow-prototype-v3';
-const clone = value => JSON.parse(JSON.stringify(value));
-const loadState = () => {
-  try { return { ...clone(seed), ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; }
-  catch { return clone(seed); }
-};
+const clone = cloneWorkspace;
 const LEGACY_DEMO_CUSTOMERS = new Set(['c1','c2','c3','c4','c5']);
-const DEMO_CLEANUP_KEY = 'fieldflow-demo-cleanup-v1';
 const removeLegacyDemoData = loaded => {
-  if (localStorage.getItem(DEMO_CLEANUP_KEY)) return loaded;
   const cleaned = clone(loaded);
   cleaned.customers = (cleaned.customers || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.id));
   cleaned.visits = (cleaned.visits || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.customerId));
   cleaned.tasks = (cleaned.tasks || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.customerId));
   if (LEGACY_DEMO_CUSTOMERS.has(cleaned.activeVisit?.customerId)) cleaned.activeVisit = null;
   if (!cleaned.customers.length && !cleaned.visits.length && !cleaned.tasks.length) cleaned.chat = clone(seed.chat);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
-  localStorage.setItem(DEMO_CLEANUP_KEY, 'complete');
   return cleaned;
 };
-let data = removeLegacyDemoData(loadState());
+let activeWorkspaceKey = workspaceKeyFor(null);
+const loadState = key => removeLegacyDemoData(readWorkspace(localStorage, key, seed));
+migrateLegacyWorkspaceToGuest(localStorage, seed, removeLegacyDemoData);
+let data = loadState(activeWorkspaceKey);
 let screen = data.activeVisit ? 'visit' : 'home';
 let filter = 'All';
 let productFilter = 'All';
@@ -58,8 +65,49 @@ let deferredInstallPrompt = null;
 let appInstalled = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 const isSamsungInternet = /SamsungBrowser/i.test(navigator.userAgent);
 
-const persistLocal = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+const persistLocal = () => writeWorkspace(localStorage, activeWorkspaceKey, data);
 const save = () => { persistLocal(); scheduleCloudSync(); };
+async function activateWorkspace(user) {
+  const transition = () => activateWorkspaceUnlocked(user);
+  if (navigator.locks?.request) return navigator.locks.request('fieldflow-workspace-transition', transition);
+  return transition();
+}
+
+function activateWorkspaceUnlocked(user) {
+  const userId = user?.id || null;
+  const nextKey = workspaceKeyFor(userId);
+  const guest = loadState(workspaceKeyFor(null));
+  const guestHasWork = guest.customers.length || guest.visits.length || guest.tasks.length || guest.travel.trips.length || guest.activeVisit || guest.travel.activeTrip;
+  if (userId && !hasWorkspace(localStorage, nextKey) && guestHasWork && !getLegacyDecision(localStorage, userId)) {
+    const legacyOwner = getLegacyOwner(localStorage);
+    if (!legacyOwner || legacyOwner === 'guest' || legacyOwner === userId) {
+      const accepted = window.confirm(`FieldFlow found work saved in guest mode.\n\nMove that saved work into ${user.email || 'this signed-in account'}?\n\nChoose Cancel to keep the guest work separate and start this account with an empty CRM.`);
+      if (accepted) {
+        try { importGuestWorkspace(localStorage, userId, seed, removeLegacyDemoData); }
+        catch (error) { recordLegacyDecision(localStorage, userId, 'blocked'); window.alert(error.message); }
+      }
+      else {
+        try { reserveLegacyWorkspace(localStorage, userId, 'skipped'); }
+        catch (error) { recordLegacyDecision(localStorage, userId, 'blocked'); window.alert(error.message); }
+      }
+    } else {
+      recordLegacyDecision(localStorage, userId, 'owned-by-another-account');
+    }
+  }
+  if (locationWatchId !== null && navigator.geolocation) {
+    navigator.geolocation.clearWatch(locationWatchId);
+    locationWatchId = null;
+  }
+  activeWorkspaceKey = nextKey;
+  data = loadState(activeWorkspaceKey);
+  persistLocal();
+  screen = data.activeVisit ? 'visit' : 'home';
+  filter = 'All';
+  productFilter = 'All';
+  query = '';
+  modal = null;
+  render();
+}
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const customer = id => data.customers.find(c => c.id === id);
 const currency = value => new Intl.NumberFormat('en-ZA', { style:'currency', currency:'ZAR' }).format(value);
@@ -223,14 +271,14 @@ function reportsView() {
 }
 
 function assistantView() {
-  return `${topbar('Assistant','Your field co-pilot')}<main class="content"><section class="card assistant-hero"><div class="assistant-mark">${icon('spark','icon-lg')}</div><h2>What do you need?</h2><p>I can use your customers, visits, mileage and follow-ups to help plan the day.</p></section><div class="suggestions">${['Who needs follow-up?','What is my mileage claim?','Who have I not visited recently?','What happened at my last visit?','What should I do today?'].map(q=>`<button class="suggestion" data-action="ask" data-value="${esc(q)}">${esc(q)}</button>`).join('')}</div><div class="chat" id="chat">${data.chat.map(m=>`<div class="bubble ${m.role}">${esc(m.text)}</div>`).join('')}</div><form class="ask-row" id="ask-form"><input class="field" id="ask-input" placeholder="Ask about your day…" autocomplete="off"><button class="btn btn-primary send-btn" aria-label="Send">${icon('send')}</button></form></main>${nav()}`;
+  return `${topbar('Assistant','Your field co-pilot')}<main class="content"><section class="card assistant-hero"><div class="assistant-mark">${icon('spark','icon-lg')}</div><h2>What do you need?</h2><p>I can use your customers, visits, mileage and follow-ups to help plan the day.</p></section><div class="suggestions">${['Who needs follow-up?','What is my mileage claim?','Who have I not visited recently?','What happened at my last visit?','What should I do today?'].map(q=>`<button class="suggestion" data-action="ask" data-value="${esc(q)}">${esc(q)}</button>`).join('')}</div><div class="chat" id="chat">${data.chat.map(m=>`<div class="bubble ${m.role}">${esc(m.text)}</div>`).join('')}</div><form class="ask-row" id="ask-form"><input class="field" id="ask-input" maxlength="1000" placeholder="Ask about your day…" autocomplete="off"><button class="btn btn-primary send-btn" aria-label="Send">${icon('send')}</button></form></main>${nav()}`;
 }
 
 function visitView() {
   if (!data.activeVisit) { screen='home'; return homeView(); }
   const c = customer(data.activeVisit.customerId);
   const structured = structureNote(data.activeVisit.note || '');
-  return `${topbar('Active visit','Capture while it’s fresh')}<main class="content"><section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">At customer</span></div><div class="timer" data-timer>${duration(data.activeVisit.start)}</div><h2 style="margin:0 0 5px">${esc(c?.name)}</h2><p>${esc(c?.area)} · ${data.activeVisit.locationLabel||'location saved'}</p></section><div class="section-row"><h2>Visit note</h2><span class="status">Saved offline</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap and speak naturally, or type below</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" placeholder="Example: The buyer agreed to trial the new range. Send the price list tomorrow…">${esc(data.activeVisit.note||'')}</textarea>${data.activeVisit.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section><button class="btn btn-danger btn-block" style="margin-top:14px" data-action="end-visit">End visit & save</button></main>${nav()}`;
+  return `${topbar('Active visit','Capture while it’s fresh')}<main class="content"><section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">At customer</span></div><div class="timer" data-timer>${duration(data.activeVisit.start)}</div><h2 style="margin:0 0 5px">${esc(c?.name)}</h2><p>${esc(c?.area)} · ${data.activeVisit.locationLabel||'location saved'}</p></section><div class="section-row"><h2>Visit note</h2><span class="status">Saved offline</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap and speak naturally, or type below</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer agreed to trial the new range. Send the price list tomorrow…">${esc(data.activeVisit.note||'')}</textarea>${data.activeVisit.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section><button class="btn btn-danger btn-block" style="margin-top:14px" data-action="end-visit">End visit & save</button></main>${nav()}`;
 }
 
 function structuredPreview(s) {
@@ -277,7 +325,7 @@ function startVisitModal(prefill) {
 
 function taskModal() {
   if (!data.customers.length) { customerFormModal(); toast('Add a client before creating a follow-up.'); return; }
-  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="task-form"><div class="handle"></div><div class="modal-head"><h2>New follow-up</h2><button type="button" class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="form-group"><label>Customer</label><select class="field" name="customerId">${data.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div><div class="form-group"><label>What needs to happen?</label><input class="field" name="title" required placeholder="Call buyer about trial order"></div><div class="form-group"><label>Due date</label><input class="field" name="due" type="date" required value="${iso(1).slice(0,10)}"></div><button class="btn btn-primary btn-block">Save follow-up</button></form></div>`; render();
+  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="task-form"><div class="handle"></div><div class="modal-head"><h2>New follow-up</h2><button type="button" class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="form-group"><label>Customer</label><select class="field" name="customerId">${data.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div><div class="form-group"><label>What needs to happen?</label><input class="field" name="title" maxlength="1000" required placeholder="Call buyer about trial order"></div><div class="form-group"><label>Due date</label><input class="field" name="due" type="date" required value="${iso(1).slice(0,10)}"></div><button class="btn btn-primary btn-block">Save follow-up</button></form></div>`; render();
 }
 
 function customerFormModal(customerId = null) {
@@ -287,15 +335,15 @@ function customerFormModal(customerId = null) {
   modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="customer-form" data-id="${existing?.id||''}">
     <div class="handle"></div><div class="modal-head"><h2>${existing?'Edit client':'Add new client'}</h2><button type="button" class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div>
     <p style="color:var(--muted);margin:-7px 0 18px">${existing?'Update the client and contact information.':'Add the basics now. You can pin the exact venue location when you arrive.'}</p>
-    <div class="form-group"><label>Client or venue name *</label><input class="field" name="name" required value="${esc(item.name)}" placeholder="Example: Riverside Bistro"></div>
-    <div class="form-grid"><div class="form-group"><label>Client type</label><select class="field" name="type">${types.map(type=>`<option ${item.type===type?'selected':''}>${type}</option>`).join('')}</select></div><div class="form-group"><label>Area</label><input class="field" name="area" value="${esc(item.area)}" placeholder="Rosebank"></div></div>
-    <div class="form-group"><label>Street address</label><input class="field" name="address" value="${esc(item.address||'')}" placeholder="Street and suburb"></div>
+    <div class="form-group"><label>Client or venue name *</label><input class="field" name="name" maxlength="120" required value="${esc(item.name)}" placeholder="Example: Riverside Bistro"></div>
+    <div class="form-grid"><div class="form-group"><label>Client type</label><select class="field" name="type">${types.map(type=>`<option ${item.type===type?'selected':''}>${type}</option>`).join('')}</select></div><div class="form-group"><label>Area</label><input class="field" name="area" maxlength="120" value="${esc(item.area)}" placeholder="Rosebank"></div></div>
+    <div class="form-group"><label>Street address</label><input class="field" name="address" maxlength="500" value="${esc(item.address||'')}" placeholder="Street and suburb"></div>
     <div class="section-row"><h2>Primary contact</h2></div>
-    <div class="form-grid"><div class="form-group"><label>Contact name</label><input class="field" name="contact" value="${esc(item.contact)}" placeholder="Full name"></div><div class="form-group"><label>Role</label><input class="field" name="role" value="${esc(item.role)}" placeholder="Buyer"></div></div>
-    <div class="form-group"><label>Email</label><input class="field" name="email" type="email" value="${esc(item.email)}" placeholder="buyer@client.co.za"></div>
-    <div class="form-group"><label>Phone</label><input class="field" name="phone" type="tel" value="${esc(item.phone)}" placeholder="+27 …"></div>
+    <div class="form-grid"><div class="form-group"><label>Contact name</label><input class="field" name="contact" maxlength="120" value="${esc(item.contact)}" placeholder="Full name"></div><div class="form-group"><label>Role</label><input class="field" name="role" maxlength="60" value="${esc(item.role)}" placeholder="Buyer"></div></div>
+    <div class="form-group"><label>Email</label><input class="field" name="email" type="email" maxlength="254" value="${esc(item.email)}" placeholder="buyer@client.co.za"></div>
+    <div class="form-group"><label>Phone</label><input class="field" name="phone" type="tel" maxlength="40" value="${esc(item.phone)}" placeholder="+27 …"></div>
     <div class="section-row"><h2>Sales opportunity</h2></div>
-    <div class="form-grid"><div class="form-group"><label>Opportunity</label><input class="field" name="opportunity" value="${esc(item.opportunity)}" placeholder="New listing"></div><div class="form-group"><label>Estimated value</label><input class="field" name="value" type="number" min="0" step="100" value="${Number(item.value)||0}"></div></div>
+    <div class="form-grid"><div class="form-group"><label>Opportunity</label><input class="field" name="opportunity" maxlength="1000" value="${esc(item.opportunity)}" placeholder="New listing"></div><div class="form-group"><label>Estimated value</label><input class="field" name="value" type="number" min="0" max="1000000000000" step="100" value="${Number(item.value)||0}"></div></div>
     <label class="location-option"><input type="checkbox" name="useCurrentLocation"><span>${icon('pin')}<span><strong>${existing&&hasCustomerLocation(existing)?'Replace saved location':'Pin current device location'}</strong><small>${data.travel.lastPosition?'Use the most recently captured device position':'Use “Save this location” from the client profile when on site'}</small></span></span></label>
     <button class="btn btn-primary btn-block" type="submit">${existing?'Save changes':'Add client'}</button>
   </form></div>`;
@@ -309,7 +357,7 @@ function settingsModal() {
     ? `<div class="card info-card"><h3>Cloud backup</h3><p style="margin:0;color:var(--muted);font-size:13px;line-height:1.5">Cloud connection is not configured on this device. Local capture still works.</p></div>`
     : cloudState.signedIn
       ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div></div>`
-      : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Sign in to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="6" required placeholder="At least 6 characters"></div><div class="form-grid"><button class="btn btn-primary" type="submit" name="intent" value="sign-in">Sign in</button><button class="btn btn-secondary" type="submit" name="intent" value="create">Create account</button></div>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
+      : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Pilot access is invitation-only. Sign in with the account created for you to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="Your password"></div><button class="btn btn-primary btn-block" type="submit">Sign in</button>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
   modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div></div>${cloudPanel}<p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
 }
 
@@ -351,7 +399,7 @@ function answerQuestion(q) {
   return 'I can help with follow-ups, customers not visited recently, last-visit notes, products discussed, and today’s priorities.';
 }
 
-function ask(q) { if(!q.trim())return; data.chat.push({role:'user',text:q.trim()},{role:'ai',text:answerQuestion(q)}); save(); screen='assistant'; render(); }
+function ask(q) { if(!q.trim())return; data.chat.push({role:'user',text:q.trim()},{role:'ai',text:answerQuestion(q)});if(data.chat.length>500){data.chat=data.chat.slice(-500);toast('Older assistant messages were removed to keep cloud backup reliable.');}save();screen='assistant';render(); }
 
 const toPoint = position => ({ lat:position.coords.latitude, lng:position.coords.longitude, accuracy:position.coords.accuracy, capturedAt:new Date(position.timestamp || Date.now()).toISOString() });
 
@@ -376,7 +424,8 @@ function resumeTravelTracking() {
     if (point.accuracy <= 100) {
       const previous = trip.points.at(-1);
       const minimumMovement = previous ? Math.max(0.025, ((previous.accuracy || 0) + point.accuracy) / 2000) : 0;
-      if (!previous || geoDistanceKm(previous, point) >= minimumMovement) trip.points.push(point);
+      if ((!previous || geoDistanceKm(previous, point) >= minimumMovement) && trip.points.length < 20000) trip.points.push(point);
+      else if (trip.points.length >= 20000 && !trip.pointLimitReached) { trip.pointLimitReached=true; toast('This trip reached the GPS safety limit. Stop and start a new trip to keep recording.'); }
       if (trip.points.length === 1) {
         const nearest = nearestCustomer(point);
         if (nearest?.km <= .5) trip.fromCustomerId = nearest.customer.id;
@@ -456,7 +505,7 @@ document.addEventListener('click', async event => {
   else if(action==='print-pricelist')window.print();
   else if(action==='share-report')emailReport();
   else if(action==='cloud-sync'){target.disabled=true;await syncCloudNow(true);settingsModal();toast(cloudState.error?'Sync needs attention':'Cloud backup is up to date');}
-  else if(action==='cloud-signout'){target.disabled=true;try{await signOutCloud();modal=null;render();toast('Signed out. Local data is still on this device.');}catch(error){toast(error.message);}}
+  else if(action==='cloud-signout'){target.disabled=true;try{await signOutCloud();modal=null;render();toast('Signed out. Account data is locked on this device.');}catch(error){toast(error.message);}}
   else if(action==='install-app'){
     if(isSamsungInternet||!deferredInstallPrompt){installHelpModal();return;}
     target.disabled=true;
@@ -484,9 +533,9 @@ document.addEventListener('submit', async event => {
   event.preventDefault();
   if(event.target.id==='ask-form'){const input=document.getElementById('ask-input');ask(input.value);}
   if(event.target.id==='auth-form'){
-    const fd=new FormData(event.target);const email=String(fd.get('email')||'').trim();const password=String(fd.get('password')||'');const intent=event.submitter?.value||'sign-in';
+    const fd=new FormData(event.target);const email=String(fd.get('email')||'').trim();const password=String(fd.get('password')||'');
     [...event.target.querySelectorAll('button')].forEach(button=>button.disabled=true);
-    try{if(intent==='create'){const result=await createAccount(email,password);toast(result.needsConfirmation?'Check your email to confirm the account.':'Account created and cloud backup started.');}else{await signInWithEmail(email,password);toast('Signed in. Your cloud data is loading.');}}catch(error){toast(error.message);settingsModal();}
+    try{await signInWithEmail(email,password);toast('Signed in. Your cloud data is loading.');}catch(error){toast(error.message);settingsModal();}
   }
   if(event.target.id==='task-form'){const fd=new FormData(event.target);data.tasks.push({id:`t${Date.now()}`,customerId:fd.get('customerId'),title:fd.get('title'),due:new Date(`${fd.get('due')}T09:00:00`).toISOString(),done:false,priority:'Next'});save();modal=null;render();toast('Follow-up added');}
   if(event.target.id==='customer-form'){
@@ -502,7 +551,7 @@ function startVoiceCapture(){
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition; const button=document.getElementById('voice-button'); const help=document.getElementById('voice-help');
   if(!Recognition){help.textContent='Voice capture is not available in this browser. Type your note below.';document.getElementById('visit-note')?.focus();return;}
   const recognition=new Recognition();recognition.lang='en-ZA';recognition.interimResults=true;button.classList.add('listening');help.textContent='Listening… tap stop on your keyboard if needed';
-  recognition.onresult=e=>{const transcript=Array.from(e.results).map(r=>r[0].transcript).join(' ');const box=document.getElementById('visit-note');box.value=transcript;data.activeVisit.note=transcript;save();};
+  recognition.onresult=e=>{const transcript=Array.from(e.results).map(r=>r[0].transcript).join(' ');const limited=transcript.slice(0,4000);const box=document.getElementById('visit-note');box.value=limited;data.activeVisit.note=limited;save();if(transcript.length>limited.length)help.textContent='The note reached its 4,000-character safety limit.';};
   recognition.onerror=()=>{help.textContent='I could not hear that. Try again or type your note.';};
   recognition.onend=()=>{button.classList.remove('listening');help.textContent='Captured. Tap “Structure my note” to review it.';};recognition.start();
 }
@@ -520,5 +569,6 @@ render();
 initializeCloud({
   getData:()=>data,
   setData:remote=>{data={...data,...remote};persistLocal();screen=data.activeVisit?'visit':'home';modal=null;render();toast('Cloud data is ready on this device.');},
+  onIdentityChange:user=>activateWorkspace(user),
   onStatus:next=>{cloudState=next;if(screen==='home'||modal?.includes('data-modal="settings"'))render();}
 });
