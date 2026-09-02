@@ -40,6 +40,13 @@ button, [role="button"] { -webkit-tap-highlight-color: transparent; }
 .hero h2 { max-width: 310px; margin: 5px 0 10px; font-size: 29px; line-height: 1.08; letter-spacing: -.035em; }
 .hero p { max-width: 340px; margin: 0 0 20px; color: #d8e5e0; line-height: 1.45; }
 .hero-actions { display: flex; gap: 10px; position: relative; z-index: 1; }
+.install-card { margin: 12px 0 4px; padding: 14px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; background: var(--lime-2); border-color: #d7e8a2; }
+.install-card .install-icon, .install-guide-mark { width: 48px; height: 48px; border-radius: 16px; display: grid; place-items: center; background: var(--ink); color: var(--lime); }
+.install-card strong, .install-card span { display: block; }
+.install-card strong { margin-bottom: 3px; font-size: 14px; }
+.install-card span { color: var(--muted); font-size: 11px; line-height: 1.35; }
+.install-card .btn { min-height: 44px; padding: 0 13px; white-space: nowrap; }
+.install-guide-mark { width: 64px; height: 64px; margin-bottom: 18px; border-radius: 21px; }
 
 .btn { min-height: 52px; padding: 0 18px; border: 0; border-radius: 17px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; font-weight: 780; cursor: pointer; transition: transform .16s, background .16s; }
 .btn:active, .quick-card:active, .nav-btn:active { transform: scale(.975); }
@@ -239,6 +246,11 @@ select.field { appearance: none; background: white; }
   .bottom-nav { box-shadow: 0 -8px 35px rgba(23,63,54,.07); }
   .modal-backdrop { align-items: center; padding: 24px; }
   .modal { border-radius: 30px; max-height: min(820px, 90vh); }
+}
+
+@media (max-width: 390px) {
+  .install-card { grid-template-columns: auto 1fr; }
+  .install-card .btn { grid-column: 1 / -1; width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -10,6 +10,15 @@ FieldFlow is a working, mobile-first field sales CRM prototype designed for a Sa
 4. Open `http://127.0.0.1:4173` in a browser.
 5. On Android, use the browser menu’s **Add to Home screen** option to test the installed PWA experience.
 
+## Install on a Samsung phone
+
+1. Open `https://ernest01982.github.io/onconapp/` in Chrome or Samsung Internet.
+2. Tap **Install** in the FieldFlow card on the Today screen. If the browser does not show the native prompt yet, the app displays the exact browser-menu steps.
+3. Confirm **Install** or **Add to Home screen**.
+4. Open FieldFlow from the phone’s Apps or Home screen, then use the profile button to create an account and enable cloud backup.
+
+The production site is served over HTTPS and includes a service worker, 192×192 and 512×512 Android icons, a maskable icon, standalone display mode and an offline app shell.
+
 The prototype starts with realistic sample customers, visits and tasks plus the imported Niew Beverages On Con catalogue effective 1 March 2026. Use the profile button in the top-right corner to restore the original demo data at any time.
 
 ## What works

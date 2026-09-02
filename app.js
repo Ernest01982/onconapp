@@ -58,6 +58,8 @@ let timerId = null;
 let travelTimerId = null;
 let locationWatchId = null;
 let cloudState = { configured:false, signedIn:false, email:'', syncing:false, lastSynced:null, error:'' };
+let deferredInstallPrompt = null;
+let appInstalled = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
 const persistLocal = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 const save = () => { persistLocal(); scheduleCloudSync(); };
@@ -116,7 +118,8 @@ const icons = {
   chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   send:'<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
   refresh:'<path d="M20 7h-5V2"/><path d="M20 7a9 9 0 1 0 2 6"/>',
-  wifi:'<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 20h.01"/>'
+  wifi:'<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 20h.01"/>',
+  download:'<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>'
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${icons[name]}</svg>`;
 
@@ -144,6 +147,7 @@ function homeView() {
   <main class="content">
     ${activeTrip ? `<section class="card driving-card"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Mileage tracking active</span></div><div class="travel-live"><div><strong data-trip-distance>${currentTripKm().toFixed(1)} km</strong><span>Distance</span></div><div><strong data-travel-timer>${duration(activeTrip.start)}</strong><span>Driving time</span></div></div><p>GPS points are saving on this device.</p><button class="btn btn-primary btn-block" data-screen="travel">Open mileage tracker</button></section>` : ''}
     ${active ? `<section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Visit in progress</span></div><div class="timer" data-timer>${duration(active.start)}</div><h2 style="margin:0 0 5px">${esc(customer(active.customerId)?.name)}</h2><p>${esc(customer(active.customerId)?.area)} · location saved</p><button class="btn btn-primary btn-block" data-screen="visit">Open visit</button></section>` : `<section class="card hero"><p class="eyebrow">Your day, made simple</p><h2>${pending.length ? `${pending.length} follow-ups. One clear plan.` : 'You’re all caught up.'}</h2><p>${pending.length ? `Start with ${esc(customer(pending[0].customerId)?.name)}, then keep moving.` : 'Start a visit when you arrive at your next customer.'}</p><div class="hero-actions"><button class="btn btn-primary" data-action="start-visit">${icon('plus')} Start visit</button><button class="btn btn-white" data-screen="assistant">${icon('spark')} Ask AI</button></div></section>`}
+    ${!appInstalled ? `<section class="card install-card"><div class="install-icon">${icon('download','icon-lg')}</div><div><strong>Put FieldFlow on your phone</strong><span>Install it like an app for quick access and offline capture.</span></div><button class="btn btn-secondary" data-action="install-app">${deferredInstallPrompt?'Install':'Show me how'}</button></section>` : ''}
     <div class="section-row"><h2>Today at a glance</h2><span class="offline-pill ${navigator.onLine?'':'offline'}">${storageLabel()}</span></div>
     <div class="quick-grid">
       <button class="quick-card" data-screen="activity" data-filter="tasks"><span class="quick-icon">${icon('list')}</span><div><strong>${pending.filter(t=>new Date(t.due)<=new Date(iso(0,23,59))).length} follow-ups</strong><span>need attention today</span></div></button>
@@ -300,12 +304,21 @@ function customerFormModal(customerId = null) {
 
 function settingsModal() {
   const syncText = cloudState.error ? `Needs attention: ${cloudState.error}` : cloudState.syncing ? 'Syncing now…' : cloudState.lastSynced ? `Last synced ${time(cloudState.lastSynced)}` : 'Ready to sync';
+  const installPanel = appInstalled ? `<div class="location-state">${icon('check')}<span>FieldFlow is installed on this device.</span></div>` : `<div class="card info-card"><h3>Install on this phone</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Add FieldFlow to your Apps screen for full-screen access and safer offline use.</p><button class="btn btn-primary btn-block" data-action="install-app">${icon('download')} ${deferredInstallPrompt?'Install FieldFlow':'Show installation steps'}</button></div>`;
   const cloudPanel = !cloudState.configured
     ? `<div class="card info-card"><h3>Cloud backup</h3><p style="margin:0;color:var(--muted);font-size:13px;line-height:1.5">Cloud connection is not configured on this device. Local capture still works.</p></div>`
     : cloudState.signedIn
       ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div></div>`
       : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Sign in to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="6" required placeholder="At least 6 characters"></div><div class="form-grid"><button class="btn btn-primary" type="submit" name="intent" value="sign-in">Sign in</button><button class="btn btn-secondary" type="submit" name="intent" value="create">Create account</button></div>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
-  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div></div>${cloudPanel}<p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block" data-action="reset-demo">${icon('refresh')} Restore demo data</button></section></div>`; render();
+  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div></div>${cloudPanel}<p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block" data-action="reset-demo">${icon('refresh')} Restore demo data</button></section></div>`; render();
+}
+
+function installHelpModal() {
+  const samsung = /SamsungBrowser/i.test(navigator.userAgent);
+  const browserName = samsung ? 'Samsung Internet' : 'Chrome';
+  const menuStep = samsung ? 'Tap the menu (☰), choose Add page to, then Home screen.' : 'Tap the three-dot menu (⋮), then choose Install app or Add to Home screen.';
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Install FieldFlow"><div class="handle"></div><div class="modal-head"><h2>Install FieldFlow</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="install-guide-mark">${icon('download','icon-lg')}</div><h3 style="font-size:20px;margin:0 0 8px">Use it like a normal app</h3><p style="color:var(--muted);line-height:1.5;margin:0 0 18px">You are using ${browserName}. ${menuStep}</p><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>1</span><strong>Open the browser menu</strong></div><div class="info-line"><span>2</span><strong>Choose Install or Add to Home screen</strong></div><div class="info-line"><span>3</span><strong>Tap Install to confirm</strong></div></div><button class="btn btn-primary btn-block" data-action="close-modal">Got it</button></section></div>`;
+  render();
 }
 
 function emptyState(ic,title,text){return `<div class="card empty"><div class="dot-icon">${icon(ic)}</div><h3>${esc(title)}</h3><p>${esc(text)}</p></div>`;}
@@ -441,6 +454,16 @@ document.addEventListener('click', async event => {
   else if(action==='share-report')emailReport();
   else if(action==='cloud-sync'){target.disabled=true;await syncCloudNow(true);settingsModal();toast(cloudState.error?'Sync needs attention':'Cloud backup is up to date');}
   else if(action==='cloud-signout'){target.disabled=true;try{await signOutCloud();modal=null;render();toast('Signed out. Local data is still on this device.');}catch(error){toast(error.message);}}
+  else if(action==='install-app'){
+    if(!deferredInstallPrompt){installHelpModal();return;}
+    target.disabled=true;
+    await deferredInstallPrompt.prompt();
+    const choice=await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt=null;
+    modal=null;
+    render();
+    toast(choice.outcome==='accepted'?'FieldFlow is being installed.':'Installation cancelled. You can install it later from your profile.');
+  }
   else if(action==='reset-demo'){if(!confirm('Restore the original demo data? This replaces the current customers, visits and mileage on this device and in cloud backup.'))return;data=clone(seed);save();modal=null;screen='home';render();toast('Demo data restored');}
 });
 
@@ -482,7 +505,9 @@ function emailPriceList(){const listName=productFilter==='All'?'Complete portfol
 function emailReport(){const visits=data.visits.filter(v=>new Date(v.start)>new Date(Date.now()-7*DAY));const trips=data.travel.trips.filter(t=>new Date(t.start)>new Date(Date.now()-7*DAY));const km=trips.reduce((sum,t)=>sum+t.distanceKm,0);const mins=visits.reduce((n,v)=>n+(new Date(v.end)-new Date(v.start))/60000,0);const body=`Weekly field activity\n\nVisits: ${visits.length}\nCustomers seen: ${new Set(visits.map(v=>v.customerId)).size}\nTime in trade: ${Math.round(mins/60)} hours\nOpen follow-ups: ${data.tasks.filter(t=>!t.done).length}\nBusiness travel: ${km.toFixed(1)} km\nMileage rate: ${currency(data.travel.ratePerKm)} per km\nReimbursement claim: ${currency(reimbursement(km))}\nOpen opportunity value: ${currency(data.customers.reduce((s,c)=>s+c.value,0))}`;window.location.href=`mailto:?subject=${encodeURIComponent('Weekly field sales activity and mileage')}&body=${encodeURIComponent(body)}`;}
 
 window.addEventListener('online',()=>{render();syncCloudNow(false);});window.addEventListener('offline',render);
-if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=event;if(screen==='home'||modal?.includes('data-modal="settings"'))render();});
+window.addEventListener('appinstalled',()=>{appInstalled=true;deferredInstallPrompt=null;modal=null;render();toast('FieldFlow is installed and ready.');});
+if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(registration=>registration.update()).catch(()=>{}));
 render();
 initializeCloud({
   getData:()=>data,
