@@ -1,0 +1,13 @@
+{
+  "name": "FieldFlow Sales Companion",
+  "short_name": "FieldFlow",
+  "description": "A voice-first, local-first field sales CRM.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7f8f3",
+  "theme_color": "#f7f8f3",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
