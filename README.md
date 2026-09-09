@@ -28,19 +28,24 @@ The app starts with an empty CRM and the imported Niew Beverages On Con catalogu
 - One-tap location-assisted **Start visit** and **End visit**
 - Add never-visited clients and edit venue, contact and opportunity details
 - Pin an unlocated client automatically on the first visit or manually from its profile
-- Device GPS mileage tracking with start/stop controls
+- Device GPS mileage tracking with start/stop controls, plus manual and odometer-based trip capture
 - Nearest-client detection and per-client location pinning from the device
 - Automatic distance and reimbursement totals at R4.90 per kilometre
 - Live visit timer and device-local capture
 - Voice input where browser speech recognition is available, with a typed fallback
 - Local note structuring into summary, products, outcome, next action and follow-up date
-- Follow-up creation and completion
+- Follow-up creation, editing, deletion and overdue/today/upcoming views
 - Customer/contact records, opportunities and recent visit history
-- Search across customers, visits and products
+- A single master-wine relationship per restaurant and wine, with Interested, Sampled, Considering, Listed, Delisted and Not Interested status history
+- Visit wine outcomes that update the restaurant's existing wine pipeline without creating duplicates
+- Two-way listing views: wines at a restaurant and restaurants listing or considering a wine
+- Search and quick filters across customers, visits, wine listings, follow-ups and products
 - Imported Niew Beverages catalogue with 95 items across 8 suppliers/categories
 - Search by product, alias or barcode; case/unit and tax-inclusive/exclusive pricing
 - Supplier-filtered, email-ready price-list sharing
-- Daily work overview and weekly management report
+- Daily, weekly, monthly and custom-range management reports covering activity, pipeline, confirmed listings and travel
+- Filterable, printable KM reports and CSV export with business-purpose and odometer fields
+- Full JSON backup and restore with a safety backup before import
 - A local assistant that answers common planning and customer-history questions
 - Service-worker caching and local-first persistence for offline-safe capture
 - Invitation-only email/password sign-in for the single-user pilot
@@ -48,11 +53,11 @@ The app starts with an empty CRM and the imported Niew Beverages On Con catalogu
 
 ## Prototype boundaries
 
-The app saves to the browser immediately and works without an account. Guest data and each signed-in user's data are stored in separate device workspaces, and signing out locks the account workspace. When a user signs in, normalized customer, visit, task, product and travel records sync to Supabase. Its “AI” note extraction and assistant are intentionally deterministic for now so the core workflow can be tested without an AI API key. The price-list and report buttons prepare an email through the device’s configured mail app; direct Microsoft 365 sending is an integration step described in [PRODUCT-NOTES.md](PRODUCT-NOTES.md).
+The app saves to the browser immediately and works without an account. Guest data and each signed-in user's data are stored in separate device workspaces, and signing out locks the account workspace. When a user signs in, normalized customer, visit, task, product, restaurant-wine relationship and travel records sync to Supabase. Its “AI” note extraction and assistant are intentionally deterministic for now so the core workflow can be tested without an AI API key. The price-list and report buttons prepare an email through the device’s configured mail app; direct Microsoft 365 sending is an integration step described in [PRODUCT-NOTES.md](PRODUCT-NOTES.md).
 
 The PWA uses the device’s native browser location permission. Keep the app open while recording a trip because browsers can pause foreground GPS when the screen is locked. The commercial native Android stage uses a foreground location service for reliable, visible background mileage capture.
 
-Before production use, add record-level conflict resolution, server-side AI, consent/audit controls, and production Google/Microsoft integrations. Supabase Auth, the Postgres database and ownership policies are now in place.
+Before production use, add record-level conflict resolution, server-side AI, consent/audit controls, and production Google/Microsoft integrations. Supabase Auth, the Postgres database, ownership policies and additive relationship/travel schema are now in place.
 
 ## Files
 
@@ -60,6 +65,7 @@ Before production use, add record-level conflict resolution, server-side AI, con
 - `styles.css` — responsive, touch-first visual system
 - `app.js` — data, views and working interaction flows
 - `cloud.js` — Supabase authentication and local-first synchronization
+- `domain.js` — relationship, follow-up, reporting-date and odometer business rules
 - `supabase/migrations` — versioned database schema and RLS policies
 - `public/manifest.json` and `public/sw.js` — PWA installation and offline cache
 - `package.json` — pinned app dependencies and development/build scripts

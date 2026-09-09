@@ -66,7 +66,8 @@ function customerRow(item, userId) {
     opportunity: item.opportunity || '',
     opportunity_value: Number(item.value) || 0,
     latitude: numberOrNull(item.lat),
-    longitude: numberOrNull(item.lng)
+    longitude: numberOrNull(item.lng),
+    ...(item.createdAt ? { created_at:item.createdAt } : {})
   };
 }
 
@@ -84,7 +85,8 @@ function visitRow(item, userId) {
     outcome: item.outcome || '',
     next_action: item.nextAction || '',
     follow_up_at: item.followUp || null,
-    source: item.source || 'typed'
+    source: item.source || 'typed',
+    wine_outcomes: item.wineOutcomes || []
   };
 }
 
@@ -96,7 +98,29 @@ function taskRow(item, userId) {
     title: item.title,
     due_at: item.due,
     completed: Boolean(item.done),
-    priority: item.priority || 'Next'
+    completed_at: item.completedAt || null,
+    priority: item.priority || 'Next',
+    wine_id: item.wineId || null,
+    visit_id: item.visitId || null
+  };
+}
+
+function customerWineRow(item, userId) {
+  return {
+    user_id: userId,
+    id: item.id,
+    customer_id: item.customerId,
+    wine_id: item.wineId,
+    status: item.status || 'Discussed',
+    interest_started_at: item.interestStartedAt || null,
+    sampled_at: item.sampledAt || null,
+    listing_date: item.listingDate || null,
+    delisting_date: item.delistingDate || null,
+    allocation: item.allocation || '',
+    notes: item.notes || '',
+    follow_up_at: item.followUpAt || null,
+    status_history: item.history || [],
+    ...(item.createdAt ? { created_at:item.createdAt } : {})
   };
 }
 
@@ -138,7 +162,13 @@ function tripRow(item, userId) {
     to_label: item.toLabel || '',
     distance_km: Number(item.distanceKm) || 0,
     rate_per_km: Number(item.ratePerKm) || 4.9,
-    reimbursement: Number(item.reimbursement) || 0
+    reimbursement: Number(item.reimbursement) || 0,
+    customer_id: item.customerId || null,
+    purpose: item.purpose || 'Business travel',
+    start_odometer: numberOrNull(item.startOdometer),
+    end_odometer: numberOrNull(item.endOdometer),
+    notes: item.notes || '',
+    distance_source: item.distanceSource || 'gps'
   };
 }
 
@@ -148,6 +178,7 @@ function rowsFor(data, userId) {
     visits: (data.visits || []).map(item => visitRow(item, userId)),
     tasks: (data.tasks || []).map(item => taskRow(item, userId)),
     products: (data.products || []).map(item => productRow(item, userId)),
+    customer_wines: (data.customerWines || []).map(item => customerWineRow(item, userId)),
     travel_trips: (data.travel?.trips || []).map(item => tripRow(item, userId))
   };
 }
@@ -206,10 +237,11 @@ export async function syncCloudNow(force = false) {
 
     const tables = rowsFor(data, userId);
     await syncRows('customers', tables.customers, userId, force, generation);
+    await syncRows('products', tables.products, userId, force, generation);
     await Promise.all([
       syncRows('visits', tables.visits, userId, force, generation),
       syncRows('tasks', tables.tasks, userId, force, generation),
-      syncRows('products', tables.products, userId, force, generation),
+      syncRows('customer_wines', tables.customer_wines, userId, force, generation),
       syncRows('travel_trips', tables.travel_trips, userId, force, generation)
     ]);
     assertCurrentIdentity(userId, generation);
@@ -248,15 +280,19 @@ export function scheduleCloudSync() {
 }
 
 function fromCustomer(row) {
-  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, phone:row.phone, lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude) };
+  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, phone:row.phone, lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), createdAt:row.created_at };
 }
 
 function fromVisit(row) {
-  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source };
+  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source, wineOutcomes:row.wine_outcomes||[] };
 }
 
 function fromTask(row) {
-  return { id:row.id, customerId:row.customer_id, title:row.title, due:row.due_at, done:row.completed, priority:row.priority };
+  return { id:row.id, customerId:row.customer_id, title:row.title, due:row.due_at, done:row.completed, completedAt:row.completed_at, priority:row.priority, wineId:row.wine_id, visitId:row.visit_id };
+}
+
+function fromCustomerWine(row) {
+  return { id:row.id, customerId:row.customer_id, wineId:row.wine_id, status:row.status, interestStartedAt:row.interest_started_at, sampledAt:row.sampled_at, listingDate:row.listing_date, delistingDate:row.delisting_date, allocation:row.allocation, notes:row.notes, followUpAt:row.follow_up_at, history:row.status_history||[], createdAt:row.created_at, updatedAt:row.updated_at };
 }
 
 function fromProduct(row) {
@@ -264,7 +300,7 @@ function fromProduct(row) {
 }
 
 function fromTrip(row) {
-  return { id:row.id, start:row.started_at, end:row.ended_at, points:row.points||[], fromCustomerId:row.from_customer_id, toCustomerId:row.to_customer_id, fromLabel:row.from_label, toLabel:row.to_label, distanceKm:Number(row.distance_km)||0, ratePerKm:Number(row.rate_per_km)||4.9, reimbursement:Number(row.reimbursement)||0 };
+  return { id:row.id, start:row.started_at, end:row.ended_at, points:row.points||[], fromCustomerId:row.from_customer_id, toCustomerId:row.to_customer_id, fromLabel:row.from_label, toLabel:row.to_label, distanceKm:Number(row.distance_km)||0, ratePerKm:Number(row.rate_per_km)||4.9, reimbursement:Number(row.reimbursement)||0, customerId:row.customer_id, purpose:row.purpose||'Business travel', startOdometer:numberOrNull(row.start_odometer), endOdometer:numberOrNull(row.end_odometer), notes:row.notes||'', distanceSource:row.distance_source||'gps' };
 }
 
 async function loadRemoteOrSeed() {
@@ -283,15 +319,16 @@ async function loadRemoteOrSeed() {
       return;
     }
 
-    const [customers, visits, tasks, products, trips, appState] = await Promise.all([
+    const [customers, visits, tasks, products, customerWines, trips, appState] = await Promise.all([
       client.from('customers').select('*').eq('user_id', userId).order('name'),
       client.from('visits').select('*').eq('user_id', userId).order('started_at'),
       client.from('tasks').select('*').eq('user_id', userId).order('due_at'),
       client.from('products').select('*').eq('user_id', userId).order('name'),
+      client.from('customer_wines').select('*').eq('user_id', userId).order('updated_at'),
       client.from('travel_trips').select('*').eq('user_id', userId).order('started_at'),
       client.from('app_state').select('*').eq('user_id', userId).maybeSingle()
     ]);
-    const failed = [customers, visits, tasks, products, trips, appState].find(result => result.error);
+    const failed = [customers, visits, tasks, products, customerWines, trips, appState].find(result => result.error);
     if (failed) throw failed.error;
     assertCurrentIdentity(userId, generation);
 
@@ -302,6 +339,7 @@ async function loadRemoteOrSeed() {
       visits: visits.data.map(fromVisit),
       tasks: tasks.data.map(fromTask),
       products: products.data.length ? products.data.map(fromProduct) : current.products,
+      customerWines: customerWines.data.map(fromCustomerWine),
       travel: {
         ...current.travel,
         ratePerKm: Number(profileResult.data.rate_per_km) || 4.9,
@@ -321,6 +359,7 @@ async function loadRemoteOrSeed() {
       visits: hash(normalized.visits),
       tasks: hash(normalized.tasks),
       products: hash(normalized.products),
+      customer_wines: hash(normalized.customer_wines),
       travel_trips: hash(normalized.travel_trips),
       app_state: hash({ user_id:userId, active_visit:remote.activeVisit, active_trip:remote.travel.activeTrip, last_position:remote.travel.lastPosition, chat:remote.chat })
     };

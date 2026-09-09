@@ -26,10 +26,11 @@ FieldFlow is a field rep’s daily companion rather than a traditional desk CRM.
 | Visit note | id, visit_id, transcript, structured_json, source, confidence, reviewed_at | Belongs to a visit |
 | Task | id, customer_id, visit_id, owner_id, title, due_at, completed_at, priority | May be created from a visit |
 | Product | id, sku, name, category, pack, active | Appears on price lists and visits |
+| Restaurant wine | id, customer_id, wine_id, status, listing/delisting dates, allocation, notes, follow_up_at, history | One relationship per restaurant and master wine; only `Listed` is a confirmed placement |
 | Price-list item | price_list_id, product_id, unit/pack price, VAT, effective dates | Versioned for safe sharing |
 | Visit product | visit_id, product_id, discussion type, quantity/value where known | Many-to-many link |
 | Location event | id, user_id, captured_at, coordinates, accuracy, source, consent state | Optional commercial audit trail |
-| Travel trip | id, user_id, started_at, ended_at, ordered GPS points, distance_km, rate_per_km, reimbursement, start/end customer IDs | Links business mileage to clients and reports |
+| Travel trip | id, user_id, customer_id, started_at, ended_at, from/to labels, purpose, start/end odometer, ordered GPS points, distance_km, rate_per_km, reimbursement, notes, source | Links business mileage to clients and reports |
 
 For a commercial multi-user version, every business row should carry `organisation_id`, timestamps, created/updated actor IDs and a soft-delete or archival state. Access rules must isolate organisations and territories.
 
@@ -64,6 +65,14 @@ The safest first automation is a suggestion, not full passive tracking. The Andr
 5. Reimbursement equals the recorded kilometres multiplied by the configured R4.90/km rate. The rate is stored on each completed trip so historical claims remain auditable if the policy changes later.
 6. The trip and claim appear in Today, Travel, weekly reporting and the emailed management summary.
 
+A trip can also be entered or corrected manually. If both odometer readings are supplied, kilometres are calculated as end minus start and impossible or negative values are rejected. Travel views can be filtered by day, week, month or a custom date range and exported as a business-use CSV or clean print report.
+
+### Wine interest and listings
+
+Each restaurant and master wine share one durable relationship. Interest, sampling and consideration are pipeline states; none count as a confirmed placement. Only `Listed` contributes to listing totals. Status changes append dated history rather than creating another wine or relationship record, so a later delisting retains the commercial story.
+
+The relationship is available from both directions: a restaurant shows listed and pipeline wines, while a wine shows the restaurants where it is listed or under consideration. A visit can attach master wines with outcomes. Interested, Sampled, Considering and Listed outcomes update the same relationship; a later Discussed note never downgrades a stronger status. Wine follow-ups link the task to both the restaurant and wine.
+
 The customer detail screen includes **Save this location**, allowing a rep to stand at a venue and replace its saved coordinates with the device’s current position. For payroll-grade use, the backend should retain GPS accuracy, raw points, edits, rate policy/version and approval status.
 
 ### Price-list sharing
@@ -72,11 +81,11 @@ The prototype builds an email-ready text list. The pilot should select a version
 
 ### Management reporting
 
-Daily, weekly and monthly aggregates should be computed from completed visits and tasks: visits, unique customers, duration in trade, outcomes, tasks due/completed, opportunities, products discussed and unvisited/under-visited customers. Commercial reports should filter by rep, territory, team and date, and retain links to the source records.
+Daily, weekly, monthly and custom-range aggregates are computed from completed visits, tasks, restaurant-wine status history and travel records: visits, unique customers, duration in trade, outcomes, tasks due/completed, products discussed, pipeline, confirmed listings, delistings, conversions, kilometres and reimbursement. Pipeline statuses remain separate from confirmed listings. Commercial reports should later filter by rep, territory and team and retain links to the source records.
 
 ## Architecture path
 
-The current OnconApp Supabase project is the first production-shaped backend foundation. Seven CRM tables are exposed only to authenticated users, every table has Row Level Security, and every policy checks `auth.uid()` against the row owner. Anonymous access is revoked and authenticated grants are explicit. A separate deny-by-default quota ledger, row-count limits, a 200 MB per-user approximate payload budget, and server-side text/array/JSON limits protect the shared project from unbounded direct API writes. The app always writes locally first, then synchronizes changed collections after sign-in or when connectivity returns. Guest and account workspaces are separated on-device, sign-out locks the account workspace, and identity-generation checks stop stale sync or hydration work after an account change. This first sync uses last-write-wins at collection level; record versioning and conflict prompts remain a pilot hardening task.
+The current OnconApp Supabase project is the first production-shaped backend foundation. Eight CRM tables are exposed only to authenticated users, every table has Row Level Security, and every policy checks `auth.uid()` against the row owner. Anonymous access is revoked and authenticated grants are explicit. A separate deny-by-default quota ledger, row-count limits, a 200 MB per-user approximate payload budget, and server-side text/array/JSON limits protect the shared project from unbounded direct API writes. The app always writes locally first, then synchronizes changed collections after sign-in or when connectivity returns. Guest and account workspaces are separated on-device, sign-out locks the account workspace, and identity-generation checks stop stale sync or hydration work after an account change. This first sync uses last-write-wins at collection level; record versioning and conflict prompts remain a pilot hardening task.
 
 ### Stage 1 — current zero-cost prototype
 
@@ -85,7 +94,7 @@ The current OnconApp Supabase project is the first production-shaped backend fou
 - Foreground GPS route recording, nearest-client calculation and local mileage claims
 - Service-worker app shell and device-local data
 - Optional Supabase Auth and Postgres cloud backup, with per-user Row Level Security
-- Normalized cloud records for profiles, customers, visits, tasks, products and travel trips
+- Normalized cloud records for profiles, customers, visits, tasks, products, restaurant-wine relationships and travel trips
 - Browser/device speech recognition when supported
 - Deterministic note structuring and assistant answers
 - `mailto:` sharing through the configured mail app
@@ -141,4 +150,4 @@ Microsoft documents MSAL for Android in its [MSAL Android overview](https://lear
 
 ## Validation completed
 
-The prototype was exercised in an automated Edge browser at 412 × 915 and 360 × 800 pixels. The tested path covered start visit, live location capture, note entry, structured extraction, end visit, generated follow-up and assistant response. Customers, activity, products, reports and follow-up creation were also checked. No runtime errors or horizontal overflow were observed in those checks.
+The release was exercised in an isolated mobile Chromium browser at 412 × 915 pixels. The tested path covered creating a restaurant, starting two visits, selecting a master wine, moving it from Interested to Listed, proving a later Discussed outcome did not downgrade it, delisting with retained history, adding/editing/deleting a wine follow-up, entering and correcting an odometer trip, report filtering and refresh persistence. Two-way restaurant/wine views, listing rules, KM calculations and reimbursement at R4.90/km were asserted. No runtime errors or horizontal overflow were observed. Unit coverage also checks relationship deduplication/history, legacy-data normalization, outcome precedence, task buckets, date ranges and odometer validation.

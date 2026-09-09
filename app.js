@@ -1,6 +1,20 @@
 import { realProducts } from './products-data.js';
 import { initializeCloud, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
 import {
+  PIPELINE_STATUSES,
+  VISIT_WINE_OUTCOMES,
+  WINE_STATUSES,
+  applyVisitWineOutcomes,
+  calculateTripDistance,
+  dateRange,
+  findCustomerWine,
+  groupKm,
+  isInRange,
+  normalizeWorkspace,
+  taskBuckets,
+  upsertCustomerWine
+} from './domain.js';
+import {
   cloneWorkspace,
   getLegacyDecision,
   getLegacyOwner,
@@ -15,8 +29,9 @@ import {
 } from './workspace.js';
 
 const DAY = 86_400_000;
-const now = new Date();
+const currentDate = () => new Date();
 const iso = (offset = 0, hour = 9, minute = 0) => {
+  const now = currentDate();
   const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, hour, minute);
   return d.toISOString();
 };
@@ -26,6 +41,7 @@ const seed = {
   customers: [],
   visits: [],
   tasks: [],
+  customerWines: [],
   travel: {
     ratePerKm: 4.90,
     activeTrip: null,
@@ -44,19 +60,29 @@ const removeLegacyDemoData = loaded => {
   cleaned.customers = (cleaned.customers || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.id));
   cleaned.visits = (cleaned.visits || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.customerId));
   cleaned.tasks = (cleaned.tasks || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.customerId));
+  cleaned.customerWines = (cleaned.customerWines || []).filter(item => !LEGACY_DEMO_CUSTOMERS.has(item.customerId));
   if (LEGACY_DEMO_CUSTOMERS.has(cleaned.activeVisit?.customerId)) cleaned.activeVisit = null;
   if (!cleaned.customers.length && !cleaned.visits.length && !cleaned.tasks.length) cleaned.chat = clone(seed.chat);
   return cleaned;
 };
 let activeWorkspaceKey = workspaceKeyFor(null);
-const loadState = key => removeLegacyDemoData(readWorkspace(localStorage, key, seed));
+const loadState = key => normalizeWorkspace(removeLegacyDemoData(readWorkspace(localStorage, key, seed)), realProducts);
 migrateLegacyWorkspaceToGuest(localStorage, seed, removeLegacyDemoData);
 let data = loadState(activeWorkspaceKey);
 let screen = data.activeVisit ? 'visit' : 'home';
 let filter = 'All';
 let productFilter = 'All';
+let productRelationshipFilter = 'All';
 let query = '';
 let modal = null;
+let modalQuery = '';
+let pickerContext = null;
+let reportPeriod = 'week';
+let reportCustomStart = '';
+let reportCustomEnd = '';
+let travelPeriod = 'month';
+let travelCustomStart = '';
+let travelCustomEnd = '';
 let timerId = null;
 let travelTimerId = null;
 let locationWatchId = null;
@@ -77,7 +103,7 @@ function activateWorkspaceUnlocked(user) {
   const userId = user?.id || null;
   const nextKey = workspaceKeyFor(userId);
   const guest = loadState(workspaceKeyFor(null));
-  const guestHasWork = guest.customers.length || guest.visits.length || guest.tasks.length || guest.travel.trips.length || guest.activeVisit || guest.travel.activeTrip;
+  const guestHasWork = guest.customers.length || guest.visits.length || guest.tasks.length || guest.customerWines.length || guest.travel.trips.length || guest.activeVisit || guest.travel.activeTrip;
   if (userId && !hasWorkspace(localStorage, nextKey) && guestHasWork && !getLegacyDecision(localStorage, userId)) {
     const legacyOwner = getLegacyOwner(localStorage);
     if (!legacyOwner || legacyOwner === 'guest' || legacyOwner === userId) {
@@ -104,17 +130,23 @@ function activateWorkspaceUnlocked(user) {
   screen = data.activeVisit ? 'visit' : 'home';
   filter = 'All';
   productFilter = 'All';
+  productRelationshipFilter = 'All';
   query = '';
   modal = null;
   render();
 }
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const customer = id => data.customers.find(c => c.id === id);
+const wine = id => data.products.find(p => p.id === id);
+const customerWine = id => data.customerWines.find(item => item.id === id);
+const winesForCustomer = id => data.customerWines.filter(item => item.customerId === id);
+const customersForWine = id => data.customerWines.filter(item => item.wineId === id);
 const currency = value => new Intl.NumberFormat('en-ZA', { style:'currency', currency:'ZAR' }).format(value);
 const shortDate = value => new Intl.DateTimeFormat('en-ZA', { day:'numeric', month:'short' }).format(new Date(value));
 const time = value => new Intl.DateTimeFormat('en-ZA', { hour:'2-digit', minute:'2-digit' }).format(new Date(value));
 const dayLabel = value => {
   if (!value) return 'Never';
+  const now = currentDate();
   const diff = Math.round((new Date(new Date(value).toDateString()) - new Date(now.toDateString())) / DAY);
   if (diff === 0) return 'Today'; if (diff === 1) return 'Tomorrow'; if (diff === -1) return 'Yesterday';
   return shortDate(value);
@@ -137,10 +169,30 @@ const routeDistanceKm = points => points.slice(1).reduce((total, point, index) =
 const hasCustomerLocation = item => Number.isFinite(item?.lat) && Number.isFinite(item?.lng);
 const nearestCustomer = position => data.customers.filter(hasCustomerLocation).map(item => ({ customer:item, km:geoDistanceKm(position, {lat:item.lat,lng:item.lng}) })).sort((a,b)=>a.km-b.km)[0] || null;
 const reimbursement = km => km * data.travel.ratePerKm;
-const todayTrips = () => data.travel.trips.filter(trip => new Date(trip.start).toDateString() === now.toDateString());
+const todayTrips = () => data.travel.trips.filter(trip => new Date(trip.start).toDateString() === currentDate().toDateString());
 const currentTripKm = () => data.travel.activeTrip ? routeDistanceKm(data.travel.activeTrip.points || []) : 0;
 const distanceLabel = km => Number.isFinite(km) ? (km < 1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`) : 'Location not pinned';
 const storageLabel = () => !navigator.onLine ? 'Working offline' : cloudState.signedIn ? (cloudState.syncing ? 'Syncing…' : 'Cloud backed up') : 'Saved on device';
+const dateInput = value => {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const pad = part => String(part).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+};
+const dateTimeAtNine = value => value ? new Date(`${value}T09:00:00`).toISOString() : null;
+const relationshipTone = status => status === 'Listed' ? 'listed' : status === 'Delisted' || status === 'Not Interested' ? 'inactive' : status === 'Sampled' ? 'sampled' : PIPELINE_STATUSES.includes(status) ? 'pipeline' : '';
+const activeListings = () => data.customerWines.filter(item => item.status === 'Listed');
+const pendingFollowUps = () => data.tasks.filter(item => !item.done);
+const historicalStatus = (relation, status) => relation.status === status || (relation.history || []).some(event => event.status === status);
+
+function createFollowUp({ customerId, wineId = null, visitId = null, title, due }) {
+  const existing = data.tasks.find(task => !task.done && task.customerId === customerId && task.wineId === wineId && task.title === title && task.due === due);
+  if (existing) return existing;
+  const task = { id:`t${Date.now()}${Math.random().toString(36).slice(2,5)}`, customerId, wineId, visitId, title, due, done:false, priority:'Next' };
+  data.tasks.push(task);
+  return task;
+}
 
 const icons = {
   home:'<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>',
@@ -183,6 +235,7 @@ function nav() {
 }
 
 function homeView() {
+  const now = currentDate();
   const pending = data.tasks.filter(t => !t.done).sort((a,b)=>new Date(a.due)-new Date(b.due));
   const todayVisits = data.visits.filter(v => new Date(v.start).toDateString() === now.toDateString());
   const active = data.activeVisit;
@@ -210,64 +263,109 @@ function homeView() {
 
 function taskCard(t) {
   const c = customer(t.customerId); const overdue = !t.done && new Date(t.due) < new Date(new Date().setHours(0,0,0,0));
-  return `<article class="card task-card ${t.done?'done':''}"><button class="check ${t.done?'done':''}" data-action="toggle-task" data-id="${t.id}" aria-label="${t.done?'Reopen':'Complete'} task">${t.done?icon('check'):''}</button><div class="list-card-main"><h3>${esc(t.title)}</h3><p>${esc(c?.name)} · ${dayLabel(t.due)} at ${time(t.due)}</p></div><div class="date-chip ${overdue?'overdue':''}">${overdue?'Overdue':dayLabel(t.due)}</div></article>`;
+  const product = wine(t.wineId);
+  return `<article class="card task-card ${t.done?'done':''}"><button class="check ${t.done?'done':''}" data-action="toggle-task" data-id="${t.id}" aria-label="${t.done?'Reopen':'Complete'} task">${t.done?icon('check'):''}</button><div class="list-card-main"><h3>${esc(t.title)}</h3><p>${esc(c?.name||'Client')} ${product?`· ${esc(product.name)}`:''}<br>${dayLabel(t.due)} at ${time(t.due)}</p></div><div class="task-actions"><div class="date-chip ${overdue?'overdue':''}">${overdue?'Overdue':dayLabel(t.due)}</div><button class="mini-btn" data-action="edit-task" data-id="${t.id}" aria-label="Edit follow-up">Edit</button></div></article>`;
 }
 
 function customersView() {
   const position = data.travel.lastPosition;
   const customerTypes = ['All', ...new Set(data.customers.map(c=>c.type).filter(Boolean))];
-  const filtered = data.customers.filter(c => `${c.name} ${c.area} ${c.contact}`.toLowerCase().includes(query.toLowerCase()) && (filter==='All'||c.type===filter)).sort((a,b)=>position?geoDistanceKm(position,{lat:a.lat,lng:a.lng})-geoDistanceKm(position,{lat:b.lat,lng:b.lng}):0);
-  return `${topbar('Customers','Your territory')}<main class="content"><div class="customer-actions"><button class="btn btn-primary" data-action="add-customer">${icon('plus')} Add client</button><button class="btn btn-secondary" data-action="locate-customers">${icon('pin')} ${position?'Refresh location':'Clients near me'}</button></div>${position?`<div class="location-state">${icon('check')}<span>Location captured ${time(position.capturedAt)}. Pinned customers are sorted by distance.</span></div>`:''}<div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search venue or contact" aria-label="Search customers"></div><div class="filter-row">${customerTypes.map(x=>`<button class="filter-chip ${filter===x?'active':''}" data-action="filter" data-value="${esc(x)}">${esc(x)}</button>`).join('')}</div><div class="list">${filtered.map((c,index)=>{const km=position?geoDistanceKm(position,{lat:c.lat,lng:c.lng}):null;const pinned=hasCustomerLocation(c);return `<article class="card customer-card" data-action="customer" data-id="${c.id}" tabindex="0"><div class="customer-top"><div class="dot-icon">${initials(c.name)}</div><div class="list-card-main"><h3>${esc(c.name)}</h3><p>${esc(c.area||'Area not added')} · ${esc(c.type)}</p></div>${icon('arrow')}</div><div class="customer-meta"><span>${position?`${index===0&&pinned?'Nearest · ':''}${distanceLabel(km)}${Number.isFinite(km)?' away':''}`:`${c.lastVisit?`Last visit ${dayLabel(c.lastVisit)}`:'Never visited'}`}</span><span>${currency(c.value||0)} opportunity</span></div></article>`}).join('') || emptyState('search','No matches','Try a different customer, contact or filter.')}</div></main>${nav()}`;
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const specialMatch = c => {
+    const relations = winesForCustomer(c.id);
+    if (filter === 'Listed') return relations.some(item=>item.status==='Listed');
+    if (filter === 'Interested') return relations.some(item=>PIPELINE_STATUSES.includes(item.status));
+    if (filter === 'Follow-up') return data.tasks.some(item=>!item.done&&item.customerId===c.id);
+    if (filter === 'Overdue') return data.tasks.some(item=>!item.done&&item.customerId===c.id&&new Date(item.due)<todayStart);
+    return filter === 'All' || c.type === filter;
+  };
+  const filtered = data.customers.filter(c => `${c.name} ${c.area} ${c.contact}`.toLowerCase().includes(query.toLowerCase()) && specialMatch(c)).sort((a,b)=>position?geoDistanceKm(position,{lat:a.lat,lng:a.lng})-geoDistanceKm(position,{lat:b.lat,lng:b.lng}):String(a.name).localeCompare(String(b.name)));
+  const chips = [...customerTypes, 'Listed', 'Interested', 'Follow-up', 'Overdue'];
+  return `${topbar('Customers','Your territory')}<main class="content"><div class="customer-actions"><button class="btn btn-primary" data-action="add-customer">${icon('plus')} Add client</button><button class="btn btn-secondary" data-action="locate-customers">${icon('pin')} ${position?'Refresh location':'Clients near me'}</button></div>${position?`<div class="location-state">${icon('check')}<span>Location captured ${time(position.capturedAt)}. Pinned customers are sorted by distance.</span></div>`:''}<div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search name, area or contact" aria-label="Search customers"></div><div class="filter-row">${chips.map(x=>`<button class="filter-chip ${filter===x?'active':''}" data-action="filter" data-value="${esc(x)}">${esc(x)}</button>`).join('')}</div><div class="list">${filtered.map((c,index)=>{const km=position?geoDistanceKm(position,{lat:c.lat,lng:c.lng}):null;const pinned=hasCustomerLocation(c);const listed=winesForCustomer(c.id).filter(item=>item.status==='Listed').length;return `<article class="card customer-card" data-action="customer" data-id="${c.id}" tabindex="0"><div class="customer-top"><div class="dot-icon">${initials(c.name)}</div><div class="list-card-main"><h3>${esc(c.name)}</h3><p>${esc(c.area||'Area not added')} · ${esc(c.type)}</p></div>${icon('arrow')}</div><div class="customer-meta"><span>${position?`${index===0&&pinned?'Nearest · ':''}${distanceLabel(km)}${Number.isFinite(km)?' away':''}`:`${c.lastVisit?`Last visit ${dayLabel(c.lastVisit)}`:'Never visited'}`}</span><span>${listed?`${listed} listed wine${listed===1?'':'s'}`:`${currency(c.value||0)} opportunity`}</span></div></article>`}).join('') || emptyState('search','No matches','Try a different customer, contact or filter.')}</div></main>${nav()}`;
 }
 
 function activityView() {
   const mode = filter === 'tasks' ? 'tasks' : 'visits';
-  const visits = [...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start)).filter(v => `${customer(v.customerId)?.name} ${v.summary} ${v.products.join(' ')}`.toLowerCase().includes(query.toLowerCase()));
+  const visits = [...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start)).filter(v => `${customer(v.customerId)?.name} ${v.summary} ${(v.products||[]).join(' ')}`.toLowerCase().includes(query.toLowerCase()));
+  const buckets = taskBuckets(data.tasks);
+  const taskSection = (title, items, tone='') => items.length ? `<div class="section-row compact"><h2>${title}</h2><span class="status ${tone}">${items.length}</span></div><div class="list">${items.map(taskCard).join('')}</div>` : '';
   return `${topbar('Activity','Your field record')}<main class="content"><div class="filter-row"><button class="filter-chip ${mode==='visits'?'active':''}" data-action="activity-mode" data-value="visits">Visit history</button><button class="filter-chip ${mode==='tasks'?'active':''}" data-action="activity-mode" data-value="tasks">Follow-ups</button><button class="filter-chip" data-screen="reports">Reports</button></div>
-  ${mode==='visits' ? `<div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search visits, notes or products"></div><div class="timeline">${visits.map(v=>{const c=customer(v.customerId);return `<article class="card timeline-item" data-action="customer" data-id="${c?.id}"><span class="timeline-time">${dayLabel(v.start)} · ${time(v.start)} · ${duration(v.start,v.end)}</span><h3>${esc(c?.name)}</h3><p>${esc(v.summary)}</p><div style="margin-top:10px"><span class="status ${v.outcome?.includes('agreed')?'good':''}">${esc(v.outcome)}</span></div></article>`}).join('') || emptyState('clock','No visits found','Your completed visits will appear here.')}</div>` : `<div class="list">${[...data.tasks].sort((a,b)=>Number(a.done)-Number(b.done)||new Date(a.due)-new Date(b.due)).map(taskCard).join('')}</div><button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="add-task">${icon('plus')} Add follow-up</button>`}
+  ${mode==='visits' ? `<div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search visits, notes or products"></div><div class="timeline">${visits.map(v=>{const c=customer(v.customerId);return `<article class="card timeline-item" data-action="visit-detail" data-id="${v.id}" tabindex="0"><span class="timeline-time">${dayLabel(v.start)} · ${time(v.start)} · ${duration(v.start,v.end)}</span><h3>${esc(c?.name)}</h3><p>${esc(v.summary)}</p><div class="chip-wrap">${(v.wineOutcomes||[]).slice(0,3).map(item=>`<span class="status ${relationshipTone(item.outcome)}">${esc(wine(item.wineId)?.name||'Wine')} · ${esc(item.outcome)}</span>`).join('')||`<span class="status ${v.outcome?.includes('agreed')?'good':''}">${esc(v.outcome)}</span>`}</div></article>`}).join('') || emptyState('clock','No visits found','Your completed visits will appear here.')}</div>` : `${taskSection('Overdue',buckets.overdue,'inactive')}${taskSection('Due today',buckets.today,'hot')}${taskSection('Upcoming',buckets.upcoming)}${taskSection('Completed',buckets.completed,'good')}${!data.tasks.length?emptyState('check','No follow-ups','Add a practical next action for a client or wine.'):''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="add-task">${icon('plus')} Add follow-up</button>`}
   </main>${nav()}`;
+}
+
+function rangeControls(kind, period, customStart, customEnd) {
+  return `<div class="filter-row period-row">${[['today','Today'],['week','This week'],['month','This month'],['custom','Custom']].map(([value,label])=>`<button class="filter-chip ${period===value?'active':''}" data-action="${kind}-period" data-value="${value}">${label}</button>`).join('')}</div>${period==='custom'?`<div class="custom-range"><label>From<input class="field" id="${kind}-custom-start" type="date" value="${esc(customStart)}"></label><label>To<input class="field" id="${kind}-custom-end" type="date" value="${esc(customEnd)}"></label><button class="btn btn-secondary" data-action="apply-${kind}-range">Apply</button></div>`:''}`;
+}
+
+function tripCard(trip) {
+  const from=customer(trip.fromCustomerId); const to=customer(trip.toCustomerId); const account=customer(trip.customerId);
+  return `<article class="card trip-card"><div class="trip-card-head"><span class="status">${shortDate(trip.start)} · ${esc(trip.distanceSource||'gps')}</span><button class="mini-btn" data-action="edit-trip" data-id="${trip.id}">Edit</button></div><div class="trip-route"><div class="route-dot"></div><div><span>${time(trip.start)}</span><strong>${esc(from?.name||trip.fromLabel||'Start location')}</strong></div></div><div class="trip-line"></div><div class="trip-route"><div class="route-dot end"></div><div><span>${time(trip.end)}</span><strong>${esc(to?.name||trip.toLabel||account?.name||'End location')}</strong></div></div><p class="trip-purpose">${esc(account?.name||'No account linked')} · ${esc(trip.purpose||'Business travel')}</p>${trip.startOdometer!=null?`<p class="trip-odometer">Odometer ${trip.startOdometer.toFixed(1)} → ${trip.endOdometer.toFixed(1)}</p>`:''}<div class="trip-total"><span>${Number(trip.distanceKm||0).toFixed(1)} km</span><strong>${currency(Number(trip.reimbursement)||0)}</strong></div></article>`;
 }
 
 function travelView() {
   const active = data.travel.activeTrip;
   const trips = [...data.travel.trips].sort((a,b)=>new Date(b.start)-new Date(a.start));
-  const weekStart = new Date(now.getFullYear(),now.getMonth(),now.getDate()-6);
-  const weekTrips = trips.filter(trip=>new Date(trip.start)>=weekStart);
-  const todayKm = todayTrips().reduce((sum,trip)=>sum+trip.distanceKm,0);
-  const weekKm = weekTrips.reduce((sum,trip)=>sum+trip.distanceKm,0);
+  let range; try { range=dateRange(travelPeriod,travelCustomStart,travelCustomEnd); } catch { range=dateRange('month'); }
+  const filtered = trips.filter(trip=>isInRange(trip.start,range));
+  const totalKm = filtered.reduce((sum,trip)=>sum+Number(trip.distanceKm||0),0);
+  const totalClaim = filtered.reduce((sum,trip)=>sum+Number(trip.reimbursement||0),0);
+  const byAccount = groupKm(filtered,trip=>customer(trip.customerId)?.name||'Unassigned');
+  const byDay = groupKm(filtered,trip=>new Date(trip.start).toLocaleDateString('en-ZA',{day:'numeric',month:'short'}));
+  const byMonth = groupKm(filtered,trip=>new Date(trip.start).toLocaleDateString('en-ZA',{month:'long',year:'numeric'}));
   const closest = data.travel.lastPosition ? data.customers.filter(hasCustomerLocation).map(item=>({item,km:geoDistanceKm(data.travel.lastPosition,{lat:item.lat,lng:item.lng})})).sort((a,b)=>a.km-b.km).slice(0,3) : [];
+  const groupRows = (title,rows)=>rows.length?`<div class="section-row compact"><h2>${title}</h2></div><div class="card summary-list">${rows.slice(0,8).map(row=>`<div class="info-line"><span>${esc(row.label)}</span><strong>${row.km.toFixed(1)} km</strong></div>`).join('')}</div>`:'';
   return `${topbar('Travel & mileage',`${currency(data.travel.ratePerKm)} per kilometre`)}<main class="content">
-    ${active ? `<section class="card driving-card"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">GPS route recording</span></div><div class="travel-live"><div><strong data-trip-distance>${currentTripKm().toFixed(1)} km</strong><span>Distance</span></div><div><strong data-travel-timer>${duration(active.start)}</strong><span>Elapsed</span></div></div><p>${active.points.length} accepted GPS points · ${active.lastAccuracy?`±${Math.round(active.lastAccuracy)} m accuracy`:'waiting for location'}</p><button class="btn btn-danger btn-block" data-action="stop-travel">Stop driving & calculate</button></section>` : `<section class="card hero"><p class="eyebrow">GPS mileage tracker</p><h2>Track the drive. Claim the right amount.</h2><p>Start before you leave. FieldFlow will calculate the route and reimbursement at ${currency(data.travel.ratePerKm)}/km.</p><button class="btn btn-primary" data-action="start-travel">${icon('pin')} Start driving</button></section>`}
-    <div class="section-row"><h2>Mileage summary</h2><span class="status">Rate ${currency(data.travel.ratePerKm)}/km</span></div>
-    <div class="metric-grid"><div class="card metric"><span>Today</span><strong>${todayKm.toFixed(1)} km</strong></div><div class="card metric"><span>Today’s claim</span><strong>${currency(reimbursement(todayKm))}</strong></div><div class="card metric"><span>Last 7 days</span><strong>${weekKm.toFixed(1)} km</strong></div><div class="card metric"><span>7-day claim</span><strong>${currency(reimbursement(weekKm))}</strong></div></div>
-    <div class="location-state">${icon('pin')}<span><strong>Location privacy:</strong> tracking starts only when you tap Start driving. Keep the PWA open during the trip; the native Android version can continue safely in the background.</span></div>
+    ${active ? `<section class="card driving-card"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">GPS route recording</span></div><div class="travel-live"><div><strong data-trip-distance>${currentTripKm().toFixed(1)} km</strong><span>Distance</span></div><div><strong data-travel-timer>${duration(active.start)}</strong><span>Elapsed</span></div></div><p>${active.points.length} accepted GPS points · ${active.lastAccuracy?`±${Math.round(active.lastAccuracy)} m accuracy`:'waiting for location'}</p><button class="btn btn-danger btn-block" data-action="stop-travel">Stop driving & calculate</button></section>` : `<section class="card hero"><p class="eyebrow">Business mileage</p><h2>Track the drive. Keep the proof.</h2><p>Use GPS for live trips or add an odometer trip manually. Reimbursement stays fixed to the rate saved on each trip.</p><div class="hero-actions"><button class="btn btn-primary" data-action="start-travel">${icon('pin')} Start driving</button><button class="btn btn-white" data-action="add-trip">${icon('plus')} Add trip</button></div></section>`}
+    <div class="section-row"><h2>KM report</h2><span class="status">Rate ${currency(data.travel.ratePerKm)}/km</span></div>${rangeControls('travel',travelPeriod,travelCustomStart,travelCustomEnd)}
+    <div class="metric-grid"><div class="card metric"><span>Business KM</span><strong>${totalKm.toFixed(1)}</strong></div><div class="card metric"><span>Trips</span><strong>${filtered.length}</strong></div><div class="card metric"><span>Reimbursement</span><strong>${currency(totalClaim)}</strong></div><div class="card metric"><span>Accounts</span><strong>${new Set(filtered.map(trip=>trip.customerId).filter(Boolean)).size}</strong></div></div>
+    <div class="report-actions"><button class="btn btn-secondary" data-action="export-km">${icon('download')} Export CSV</button><button class="btn btn-ghost" data-action="print-km">Print</button></div>
+    <div class="location-state">${icon('pin')}<span><strong>Location privacy:</strong> tracking starts only when you tap Start driving. Keep the PWA open during a GPS trip.</span></div>
     <div class="section-row"><h2>Clients near me</h2><button class="text-btn" data-action="locate-customers">${data.travel.lastPosition?'Refresh':'Locate me'}</button></div>
-    <div class="list">${closest.length?closest.map((entry,index)=>`<article class="card list-card" data-action="customer" data-id="${entry.item.id}"><div class="dot-icon">${index+1}</div><div class="list-card-main"><h3>${esc(entry.item.name)}</h3><p>${esc(entry.item.area)} · ${entry.km<1?`${Math.round(entry.km*1000)} m`:`${entry.km.toFixed(1)} km`} away</p></div>${icon('arrow')}</article>`).join(''):emptyState('pin','Location not captured','Tap Locate me to find the closest saved client.')}</div>
-    <div class="section-row"><h2>Trip history</h2><span class="status">${trips.length} trips</span></div>
-    <div class="list">${trips.length?trips.map(trip=>{const from=customer(trip.fromCustomerId);const to=customer(trip.toCustomerId);return `<article class="card trip-card"><div class="trip-route"><div class="route-dot"></div><div><span>${dayLabel(trip.start)} · ${time(trip.start)}</span><strong>${esc(from?.name||trip.fromLabel||'Start location')}</strong></div></div><div class="trip-line"></div><div class="trip-route"><div class="route-dot end"></div><div><span>${time(trip.end)}</span><strong>${esc(to?.name||trip.toLabel||'End location')}</strong></div></div><div class="trip-total"><span>${trip.distanceKm.toFixed(1)} km</span><strong>${currency(trip.reimbursement)}</strong></div></article>`}).join(''):emptyState('map','No trips recorded','Start driving to create your first mileage claim.')}</div>
+    <div class="list">${closest.length?closest.map((entry,index)=>`<article class="card list-card" data-action="customer" data-id="${entry.item.id}" tabindex="0"><div class="dot-icon">${index+1}</div><div class="list-card-main"><h3>${esc(entry.item.name)}</h3><p>${esc(entry.item.area)} · ${entry.km<1?`${Math.round(entry.km*1000)} m`:`${entry.km.toFixed(1)} km`} away</p></div>${icon('arrow')}</article>`).join(''):emptyState('pin','Location not captured','Tap Locate me to find the closest saved client.')}</div>
+    ${groupRows('KM by account',byAccount)}${groupRows('KM by day',byDay)}${groupRows('KM by month',byMonth)}
+    <div class="section-row"><h2>Trip records</h2><span class="status">${filtered.length} shown</span></div><div class="report-table-wrap"><table class="report-table"><thead><tr><th>Date</th><th>From</th><th>To</th><th>Restaurant</th><th>Business purpose</th><th>KM</th></tr></thead><tbody>${filtered.map(trip=>`<tr><td>${shortDate(trip.start)}</td><td>${esc(customer(trip.fromCustomerId)?.name||trip.fromLabel||'Start')}</td><td>${esc(customer(trip.toCustomerId)?.name||trip.toLabel||'End')}</td><td>${esc(customer(trip.customerId)?.name||'—')}</td><td>${esc(trip.purpose||'Business travel')}</td><td>${Number(trip.distanceKm||0).toFixed(1)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="5">TOTAL BUSINESS KM</td><td>${totalKm.toFixed(1)} KM</td></tr></tfoot></table></div>
+    <div class="section-row"><h2>Trip history</h2><span class="status">${filtered.length} trips</span></div><div class="list">${filtered.length?filtered.map(tripCard).join(''):emptyState('map','No trips in this period','Start driving or add an odometer trip.')}</div>
   </main>${nav()}`;
 }
 
 function productsView() {
   const brands = [...new Set(data.products.map(p => p.brand))];
   const products = data.products.filter(p =>
-    `${p.name} ${p.sku} ${p.brand} ${p.range} ${p.caseBarcode} ${p.unitBarcode}`.toLowerCase().includes(query.toLowerCase()) &&
-    (productFilter === 'All' || p.brand === productFilter)
+    `${p.name} ${p.sku} ${p.brand} ${p.range} ${p.size} ${p.vintage||''} ${p.variety||''} ${p.caseBarcode} ${p.unitBarcode}`.toLowerCase().includes(query.toLowerCase()) &&
+    (productFilter === 'All' || p.brand === productFilter) &&
+    (productRelationshipFilter === 'All' || customersForWine(p.id).some(item=>productRelationshipFilter==='Listed'?item.status==='Listed':productRelationshipFilter==='Interested'?PIPELINE_STATUSES.includes(item.status):item.followUpAt&&new Date(item.followUpAt)<=new Date()))
   );
-  return `${topbar('Price list','Niew Beverages · On Con')}<main class="content"><div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search product, alias or barcode"></div><div class="filter-row"><button class="filter-chip ${productFilter==='All'?'active':''}" data-action="product-brand" data-value="All">All · ${data.products.length}</button>${brands.map(brand=>`<button class="filter-chip ${productFilter===brand?'active':''}" data-action="product-brand" data-value="${esc(brand)}">${esc(brand)} · ${data.products.filter(p=>p.brand===brand).length}</button>`).join('')}</div><div class="hero card" style="min-height:auto;margin-bottom:14px"><p class="eyebrow">On Con price list · 1 March 2026</p><h2 style="font-size:24px">${productFilter==='All'?'Complete portfolio':esc(productFilter)}</h2><p>${products.length} products shown. Case and unit prices include VAT.</p><div class="hero-actions"><button class="btn btn-primary" data-action="email-pricelist">${icon('mail')} Email this list</button><button class="btn btn-white" data-action="print-pricelist">Print</button></div></div><div class="list">${products.map(p=>`<article class="card product-card"><div class="product-head"><div><h3>${esc(p.name)}</h3><p>${esc(p.sku)} · ${esc(p.brand)} · ${esc(p.range)}</p></div>${p.availability==='Confirm availability'?'<span class="status hot">Confirm stock</span>':''}</div><div class="price-pair"><div><span>Case incl. VAT</span><strong>${currency(p.price)}</strong>${p.exCase!=null?`<small>${currency(p.exCase)} excl.</small>`:''}</div><div><span>Unit incl. VAT</span><strong>${p.unitPrice!=null?currency(p.unitPrice):'—'}</strong>${p.exUnit!=null?`<small>${currency(p.exUnit)} excl.</small>`:''}</div></div><div class="product-foot"><span class="status">${esc(p.pack)}</span><span style="font-size:11px;color:var(--muted)">${p.caseBarcode?`Case ${esc(p.caseBarcode)}`:'No barcode supplied'}</span></div></article>`).join('') || emptyState('search','No products found','Try another product, alias, barcode or supplier.')}</div></main>${nav()}`;
+  return `${topbar('Price list','Niew Beverages · On Con')}<main class="content"><div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search wine, producer, variety or vintage"></div><div class="filter-row"><button class="filter-chip ${productRelationshipFilter==='All'?'active':''}" data-action="product-status-filter" data-value="All">All</button><button class="filter-chip ${productRelationshipFilter==='Listed'?'active':''}" data-action="product-status-filter" data-value="Listed">Listed</button><button class="filter-chip ${productRelationshipFilter==='Interested'?'active':''}" data-action="product-status-filter" data-value="Interested">Interested</button><button class="filter-chip ${productRelationshipFilter==='Follow-up'?'active':''}" data-action="product-status-filter" data-value="Follow-up">Follow-up</button></div><div class="filter-row"><button class="filter-chip ${productFilter==='All'?'active':''}" data-action="product-brand" data-value="All">All producers · ${data.products.length}</button>${brands.map(brand=>`<button class="filter-chip ${productFilter===brand?'active':''}" data-action="product-brand" data-value="${esc(brand)}">${esc(brand)} · ${data.products.filter(p=>p.brand===brand).length}</button>`).join('')}</div><div class="hero card compact-hero"><p class="eyebrow">On Con price list · 1 March 2026</p><h2>${productFilter==='All'?'Complete portfolio':esc(productFilter)}</h2><p>${products.length} products shown. Open a wine to see listings and pipeline.</p><div class="hero-actions"><button class="btn btn-primary" data-action="email-pricelist">${icon('mail')} Email this list</button><button class="btn btn-white" data-action="print-pricelist">Print</button></div></div><div class="list">${products.map(p=>{const relations=customersForWine(p.id),listed=relations.filter(item=>item.status==='Listed').length,pipeline=relations.filter(item=>PIPELINE_STATUSES.includes(item.status)).length;return `<article class="card product-card interactive" data-action="product-detail" data-id="${p.id}" tabindex="0"><div class="product-head"><div><h3>${esc(p.name)}</h3><p>${esc(p.sku)} · ${esc(p.brand)} · ${esc(p.range)}</p></div>${listed?`<span class="status listed">${listed} listed</span>`:p.availability==='Confirm availability'?'<span class="status hot">Confirm stock</span>':''}</div><div class="price-pair"><div><span>Case incl. VAT</span><strong>${currency(p.price)}</strong>${p.exCase!=null?`<small>${currency(p.exCase)} excl.</small>`:''}</div><div><span>Unit incl. VAT</span><strong>${p.unitPrice!=null?currency(p.unitPrice):'—'}</strong>${p.exUnit!=null?`<small>${currency(p.exUnit)} excl.</small>`:''}</div></div><div class="product-foot"><span class="status">${esc(p.pack)}</span><span class="wine-counts">${listed} listed · ${pipeline} pipeline</span></div></article>`}).join('') || emptyState('search','No products found','Try another wine, producer, variety, vintage or filter.')}</div></main>${nav()}`;
 }
 
 function reportsView() {
-  const days = Array.from({length:7},(_,i)=>new Date(now.getFullYear(),now.getMonth(),now.getDate()-6+i));
-  const counts = days.map(d=>data.visits.filter(v=>new Date(v.start).toDateString()===d.toDateString()).length);
-  const weekVisits = data.visits.filter(v=>new Date(v.start)>=days[0]);
-  const customersSeen = new Set(weekVisits.map(v=>v.customerId)).size;
-  const mins = weekVisits.reduce((n,v)=>n+(new Date(v.end)-new Date(v.start))/60000,0);
-  const due = data.tasks.filter(t=>!t.done&&new Date(t.due)<=new Date(iso(0,23,59))).length;
-  const discussed = [...new Set(weekVisits.flatMap(v=>v.products))];
-  const weekTrips = data.travel.trips.filter(trip=>new Date(trip.start)>=days[0]);
-  const weekKm = weekTrips.reduce((sum,trip)=>sum+trip.distanceKm,0);
-  return `${topbar('Reports','Management snapshot')}<main class="content"><div class="filter-row"><button class="filter-chip">Daily</button><button class="filter-chip active">This week</button><button class="filter-chip">This month</button></div><div class="metric-grid"><div class="card metric"><span>Visits</span><strong>${weekVisits.length}</strong></div><div class="card metric"><span>Customers seen</span><strong>${customersSeen}</strong></div><div class="card metric"><span>Time in trade</span><strong>${Math.round(mins/60)}h</strong></div><div class="card metric"><span>Follow-ups due</span><strong>${due}</strong></div><div class="card metric"><span>Business travel</span><strong>${weekKm.toFixed(1)} km</strong></div><div class="card metric"><span>Mileage claim</span><strong>${currency(reimbursement(weekKm))}</strong></div></div><div class="section-row"><h2>Visit rhythm</h2><span class="status">Last 7 days</span></div><section class="card chart-card"><h3>Visits per day</h3><div class="bars">${days.map((d,i)=>`<div class="bar-col"><div class="bar" style="height:${Math.max(5,counts[i]*31)}%"></div><span>${d.toLocaleDateString('en-ZA',{weekday:'short'}).slice(0,2)}</span></div>`).join('')}</div></section><div class="section-row"><h2>Management notes</h2></div><div class="list"><div class="card insight">${icon('spark','icon-lg')}<p><strong>${customersSeen} customers reached.</strong> ${due?`${due} follow-ups need attention to protect momentum.`:'All committed follow-ups are on track.'}</p></div><div class="card info-card"><h3>Travel reimbursement</h3><div class="info-line" style="border:0;padding-top:0"><span>${weekKm.toFixed(1)} km at ${currency(data.travel.ratePerKm)}/km</span><strong>${currency(reimbursement(weekKm))}</strong></div></div><div class="card info-card"><h3>Products discussed</h3><p style="margin:0;color:var(--muted);line-height:1.7">${discussed.length?discussed.map(esc).join(' · '):'No products logged this week'}</p></div><div class="card info-card"><h3>Open opportunity value</h3><strong style="font-size:27px">${currency(data.customers.reduce((sum,c)=>sum+c.value,0))}</strong></div></div><button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="share-report">${icon('mail')} Email summary</button></main>${nav()}`;
+  let range; try { range=dateRange(reportPeriod,reportCustomStart,reportCustomEnd); } catch { range=dateRange('week'); }
+  const visits=data.visits.filter(v=>isInRange(v.start,range));
+  const tasksDue=data.tasks.filter(t=>isInRange(t.due,range));
+  const tasksCompleted=data.tasks.filter(t=>t.done&&isInRange(t.completedAt||t.due,range));
+  const trips=data.travel.trips.filter(t=>isInRange(t.start,range));
+  const km=trips.reduce((sum,t)=>sum+Number(t.distanceKm||0),0);
+  const claim=trips.reduce((sum,t)=>sum+Number(t.reimbursement||0),0);
+  const mins=visits.reduce((sum,v)=>sum+Math.max(0,(new Date(v.end)-new Date(v.start))/60000),0);
+  const newAccounts=data.customers.filter(c=>c.createdAt&&isInRange(c.createdAt,range)).length;
+  const pipeline=data.customerWines.filter(r=>PIPELINE_STATUSES.includes(r.status));
+  const listed=activeListings();
+  const newListings=data.customerWines.filter(r=>(r.history||[]).some(event=>event.status==='Listed'&&isInRange(event.at,range))||(!r.history?.length&&r.listingDate&&isInRange(r.listingDate,range)));
+  const delistings=data.customerWines.filter(r=>(r.history||[]).some(event=>event.status==='Delisted'&&isInRange(event.at,range))||(!r.history?.length&&r.delistingDate&&isInRange(r.delistingDate,range)));
+  const interestedEver=data.customerWines.filter(r=>PIPELINE_STATUSES.some(status=>historicalStatus(r,status)));
+  const converted=interestedEver.filter(r=>historicalStatus(r,'Listed')).length;
+  const conversion=interestedEver.length?Math.round(converted/interestedEver.length*100):0;
+  const discussed=[...new Set(visits.flatMap(v=>(v.wineOutcomes||[]).map(item=>wine(item.wineId)?.name).filter(Boolean)))];
+  const countBy=keyFn=>[...listed.reduce((map,item)=>{const key=keyFn(item)||'Unknown';map.set(key,(map.get(key)||0)+1);return map;},new Map())].map(([label,count])=>({label,count})).sort((a,b)=>b.count-a.count);
+  const listingByWine=countBy(r=>wine(r.wineId)?.name);
+  const listingByCustomer=countBy(r=>customer(r.customerId)?.name);
+  const breakdown=(title,rows,empty)=>`<div class="card info-card"><h3>${title}</h3>${rows.length?rows.slice(0,6).map(row=>`<div class="info-line"><span>${esc(row.label)}</span><strong>${row.count}</strong></div>`).join(''):`<p class="muted-copy">${empty}</p>`}</div>`;
+  return `${topbar('Reports','Management snapshot')}<main class="content">${rangeControls('report',reportPeriod,reportCustomStart,reportCustomEnd)}<div class="metric-grid"><div class="card metric"><span>Visits</span><strong>${visits.length}</strong></div><div class="card metric"><span>Accounts visited</span><strong>${new Set(visits.map(v=>v.customerId)).size}</strong></div><div class="card metric"><span>Time in trade</span><strong>${Math.round(mins/60)}h</strong></div><div class="card metric"><span>New accounts</span><strong>${newAccounts}</strong></div><div class="card metric"><span>Follow-ups due</span><strong>${tasksDue.filter(t=>!t.done).length}</strong></div><div class="card metric"><span>Completed</span><strong>${tasksCompleted.length}</strong></div></div>
+  <div class="section-row"><h2>Wine pipeline</h2><span class="status">Current</span></div><div class="metric-grid"><div class="card metric"><span>Interested</span><strong>${pipeline.filter(r=>r.status==='Interested').length}</strong></div><div class="card metric"><span>Sampled</span><strong>${pipeline.filter(r=>r.status==='Sampled').length}</strong></div><div class="card metric"><span>Considering</span><strong>${pipeline.filter(r=>r.status==='Considering').length}</strong></div><div class="card metric"><span>Conversion to listed</span><strong>${conversion}%</strong></div></div>
+  <div class="section-row"><h2>Listings</h2><span class="status listed">Confirmed only</span></div><div class="metric-grid"><div class="card metric"><span>Active listings</span><strong>${listed.length}</strong></div><div class="card metric"><span>New in period</span><strong>${newListings.length}</strong></div><div class="card metric"><span>Delistings</span><strong>${delistings.length}</strong></div><div class="card metric"><span>Products discussed</span><strong>${discussed.length}</strong></div></div><div class="list report-breakdowns">${breakdown('Listings by wine',listingByWine,'No confirmed listings yet.')}${breakdown('Listings by restaurant',listingByCustomer,'No confirmed listings yet.')}</div>
+  <div class="section-row"><h2>Travel</h2></div><div class="metric-grid"><div class="card metric"><span>Business KM</span><strong>${km.toFixed(1)}</strong></div><div class="card metric"><span>Trips</span><strong>${trips.length}</strong></div><div class="card metric"><span>KM by accounts</span><strong>${new Set(trips.map(t=>t.customerId).filter(Boolean)).size}</strong></div><div class="card metric"><span>Mileage claim</span><strong>${currency(claim)}</strong></div></div>
+  <div class="section-row"><h2>Management notes</h2></div><div class="card insight">${icon('spark','icon-lg')}<p><strong>${new Set(visits.map(v=>v.customerId)).size} customers reached.</strong> ${pendingFollowUps().length?`${pendingFollowUps().length} open follow-ups need attention.`:'All committed follow-ups are on track.'} Only confirmed Listed relationships are counted as placements.</p></div><div class="card info-card" style="margin-top:10px"><h3>Products discussed</h3><p class="muted-copy">${discussed.length?discussed.map(esc).join(' · '):'No products logged in this period.'}</p></div><button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="share-report">${icon('mail')} Email this summary</button></main>${nav()}`;
 }
 
 function assistantView() {
@@ -278,11 +376,12 @@ function visitView() {
   if (!data.activeVisit) { screen='home'; return homeView(); }
   const c = customer(data.activeVisit.customerId);
   const structured = structureNote(data.activeVisit.note || '');
-  return `${topbar('Active visit','Capture while it’s fresh')}<main class="content"><section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">At customer</span></div><div class="timer" data-timer>${duration(data.activeVisit.start)}</div><h2 style="margin:0 0 5px">${esc(c?.name)}</h2><p>${esc(c?.area)} · ${data.activeVisit.locationLabel||'location saved'}</p></section><div class="section-row"><h2>Visit note</h2><span class="status">Saved offline</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap and speak naturally, or type below</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer agreed to trial the new range. Send the price list tomorrow…">${esc(data.activeVisit.note||'')}</textarea>${data.activeVisit.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section><button class="btn btn-danger btn-block" style="margin-top:14px" data-action="end-visit">End visit & save</button></main>${nav()}`;
+  const selected = data.activeVisit.wineOutcomes || [];
+  return `${topbar('Active visit','Capture while it’s fresh')}<main class="content"><section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">At customer</span></div><div class="timer" data-timer>${duration(data.activeVisit.start)}</div><h2 style="margin:0 0 5px">${esc(c?.name)}</h2><p>${esc(c?.area)} · ${data.activeVisit.locationLabel||'location saved'}</p></section><div class="section-row"><h2>Wines discussed</h2><button class="text-btn" data-action="add-visit-wine">${icon('plus')} Add wine</button></div><div class="list">${selected.map(item=>{const product=wine(item.wineId);return `<div class="card visit-wine-row"><div class="list-card-main"><strong>${esc(product?.name||'Wine')}</strong><span>${esc(product?.brand||'')}</span></div><select class="field compact-field" data-visit-wine-outcome="${item.wineId}" aria-label="Outcome for ${esc(product?.name||'wine')}">${VISIT_WINE_OUTCOMES.map(outcome=>`<option ${item.outcome===outcome?'selected':''}>${outcome}</option>`).join('')}</select><button class="close-btn" data-action="remove-visit-wine" data-id="${item.wineId}" aria-label="Remove wine">${icon('x')}</button></div>`}).join('')||`<button class="card add-wine-empty" data-action="add-visit-wine">${icon('plus')} Select wines from the master list</button>`}</div><div class="section-row"><h2>Visit note</h2><span class="status">Saved offline</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap and speak naturally, or type below</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer sampled the Chardonnay and is considering a listing. Follow up Friday…">${esc(data.activeVisit.note||'')}</textarea>${data.activeVisit.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section><button class="btn btn-primary btn-block sticky-save" style="margin-top:14px" data-action="end-visit">${icon('check')} End visit & save</button></main>${nav()}`;
 }
 
 function structuredPreview(s) {
-  return `<div class="structured"><div class="structured-item"><span>Summary</span><strong>${esc(s.summary)}</strong></div><div class="structured-item"><span>Products discussed</span><strong>${esc(s.products.join(', ')||'Not detected')}</strong></div><div class="structured-item"><span>Next action</span><strong>${esc(s.nextAction||'No action detected')}</strong></div><div class="structured-item"><span>Follow-up</span><strong>${esc(s.followUpLabel||'No date detected')}</strong></div></div>`;
+  return `<div class="structured"><div class="structured-item"><span>Summary</span><strong>${esc(s.summary)}</strong></div><div class="structured-item"><span>Wines detected</span><strong>${esc(s.products.join(', ')||'None detected — use Add wine')}</strong></div><div class="structured-item"><span>Next action</span><strong>${esc(s.nextAction||'No action detected')}</strong></div><div class="structured-item"><span>Follow-up</span><strong>${esc(s.followUpLabel||'No date detected')}</strong></div></div>`;
 }
 
 function structureNote(note) {
@@ -302,14 +401,52 @@ function structureNote(note) {
 function customerDetail(id) {
   const c=customer(id); if (!c) return;
   const visits=data.visits.filter(v=>v.customerId===id).sort((a,b)=>new Date(b.start)-new Date(a.start));
+  const relations=winesForCustomer(id).sort((a,b)=>(a.status==='Listed'?-1:0)-(b.status==='Listed'?-1:0)||new Date(b.updatedAt)-new Date(a.updatedAt));
+  const relationshipRows=relations.map(relation=>{const product=wine(relation.wineId);return `<div class="card wine-relation ${relationshipTone(relation.status)}"><button class="relation-main" data-action="edit-customer-wine" data-id="${relation.id}"><strong>${esc(product?.name||'Wine')}</strong><span class="status ${relationshipTone(relation.status)}">${esc(relation.status)}</span><small>${relation.status==='Listed'&&relation.listingDate?`Listed ${shortDate(relation.listingDate)}`:relation.followUpAt?`Follow up ${dayLabel(relation.followUpAt)}`:'Updated '+shortDate(relation.updatedAt)}</small>${relation.allocation?`<small>Allocation: ${esc(relation.allocation)}</small>`:''}</button><div class="relation-actions">${relation.status!=='Listed'?`<button class="mini-btn positive" data-action="set-wine-status" data-id="${relation.id}" data-status="Listed">Mark listed</button>`:''}${relation.status==='Listed'?`<button class="mini-btn" data-action="set-wine-status" data-id="${relation.id}" data-status="Delisted">Delist</button>`:''}<button class="mini-btn" data-action="wine-follow-up" data-id="${relation.id}">Follow-up</button></div></div>`}).join('');
   modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(c.name)} details">
     <div class="handle"></div><div class="modal-head"><span></span><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div>
     <div class="card detail-banner"><span class="status good">${esc(c.type)}</span><h2>${esc(c.name)}</h2><p>${esc(c.area||'Area not added')} · ${c.lastVisit?`last visit ${dayLabel(c.lastVisit)}`:'never visited'}</p><div class="detail-actions"><button class="btn btn-primary" data-action="start-visit" data-id="${c.id}">${icon('plus')} Start visit</button><button class="btn btn-white" data-action="edit-customer" data-id="${c.id}">Edit details</button><a class="btn btn-white" style="text-decoration:none" href="mailto:${encodeURIComponent(c.email)}">${icon('mail')} Email</a><button class="btn btn-white" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} Save this location</button></div></div>
     <div class="section-row"><h2>Contact</h2></div><div class="card info-card"><h3>${esc(c.contact||'No contact added')}</h3><p style="margin:-6px 0 12px;color:var(--muted)">${esc(c.role||'Role not added')}</p><div class="info-line"><span>Email</span><strong>${esc(c.email||'Not added')}</strong></div><div class="info-line"><span>Phone</span><strong>${esc(c.phone||'Not added')}</strong></div>${c.address?`<div class="info-line"><span>Address</span><strong>${esc(c.address)}</strong></div>`:''}</div>
     <div class="section-row"><h2>Saved location</h2></div><div class="card info-card">${hasCustomerLocation(c)?`<div class="info-line" style="border:0;padding-top:0"><span>Latitude</span><strong>${c.lat.toFixed(5)}</strong></div><div class="info-line"><span>Longitude</span><strong>${c.lng.toFixed(5)}</strong></div>`:`<p style="margin:0 0 14px;color:var(--muted);font-size:13px">No venue position saved yet. Pin it while you are at the client.</p>`}<button class="btn btn-secondary btn-block btn-small" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} ${hasCustomerLocation(c)?'Update':'Save'} from this device</button></div>
     <div class="section-row"><h2>Opportunity</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>${esc(c.opportunity)}</span><strong>${currency(c.value)}</strong></div></div>
+    <div class="section-row"><h2>Wines</h2><button class="text-btn" data-action="add-customer-wine" data-id="${c.id}">${icon('plus')} Add wine</button></div><div class="listing-summary"><span class="status listed">${relations.filter(item=>item.status==='Listed').length} listed</span><span class="status pipeline">${relations.filter(item=>PIPELINE_STATUSES.includes(item.status)).length} pipeline</span></div><div class="list">${relationshipRows||emptyState('box','No wines linked','Add a wine once it is discussed, sampled or listed.')}</div>
     <div class="section-row"><h2>Recent visits</h2></div><div class="list">${visits.slice(0,3).map(v=>`<div class="card list-card"><div class="dot-icon">${icon('clock')}</div><div class="list-card-main"><h3>${dayLabel(v.start)} · ${duration(v.start,v.end)}</h3><p>${esc(v.summary)}</p></div></div>`).join('')||emptyState('clock','No visits yet','Start a visit to build the history.')}</div>
   </section></div>`;
+  render();
+}
+
+function productDetail(id) {
+  const product=wine(id); if(!product)return;
+  const relations=customersForWine(id).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));
+  const listed=relations.filter(item=>item.status==='Listed');
+  const pipeline=relations.filter(item=>PIPELINE_STATUSES.includes(item.status)||item.status==='Discussed');
+  const relationList=items=>items.map(relation=>{const c=customer(relation.customerId);return `<button class="card list-card relation-link" data-action="customer" data-id="${c?.id}"><div class="dot-icon">${initials(c?.name||'?')}</div><div class="list-card-main"><h3>${esc(c?.name||'Client')}</h3><p>${esc(c?.area||'')} · ${esc(relation.status)}${relation.allocation?` · ${esc(relation.allocation)}`:''}</p></div>${icon('arrow')}</button>`}).join('');
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(product.name)} details"><div class="handle"></div><div class="modal-head"><h2>${esc(product.name)}</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>Producer</span><strong>${esc(product.brand)}</strong></div><div class="info-line"><span>Range / variety</span><strong>${esc(product.range||'—')}</strong></div><div class="info-line"><span>Pack</span><strong>${esc(product.pack)}</strong></div><div class="info-line"><span>Case incl. VAT</span><strong>${currency(product.price)}</strong></div></div><button class="btn btn-primary btn-block" style="margin-top:12px" data-action="assign-product" data-id="${product.id}">${icon('plus')} Add restaurant</button><div class="section-row"><h2>Currently listed at</h2><span class="status listed">${listed.length}</span></div><div class="list">${relationList(listed)||emptyState('check','No active listings','Only status Listed appears here.')}</div><div class="section-row"><h2>Pipeline / interest</h2><span class="status pipeline">${pipeline.length}</span></div><div class="list">${relationList(pipeline)||emptyState('clock','No active pipeline','Interested, sampled and considering restaurants appear here.')}</div>${relations.filter(item=>item.status==='Delisted').length?`<div class="section-row"><h2>Past listings</h2></div><div class="list">${relationList(relations.filter(item=>item.status==='Delisted'))}</div>`:''}</section></div>`;
+  render();
+}
+
+function winePickerModal(mode, customerId = null) {
+  pickerContext={mode,customerId};
+  const selected = new Set(mode==='visit'?(data.activeVisit?.wineOutcomes||[]).map(item=>item.wineId):winesForCustomer(customerId).map(item=>item.wineId));
+  const matches=data.products.filter(product=>product.active&&`${product.name} ${product.brand} ${product.range} ${product.sku}`.toLowerCase().includes(modalQuery.toLowerCase())).slice(0,30);
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Choose a wine"><div class="handle"></div><div class="modal-head"><h2>Choose wine</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><div class="search">${icon('search')}<input id="wine-picker-search" value="${esc(modalQuery)}" placeholder="Search wine, producer or SKU" autocomplete="off"></div><p class="modal-hint">Showing the first ${matches.length} matches. One master wine is linked—never copied.</p><div class="choice-list">${matches.map(product=>`<button class="choice ${selected.has(product.id)?'selected':''}" data-action="${mode==='visit'?'pick-visit-wine':'pick-customer-wine'}" data-id="${product.id}" ${customerId?`data-customer-id="${customerId}"`:''} ${selected.has(product.id)?'disabled':''}><div class="dot-icon">${icon('box')}</div><div><strong>${esc(product.name)}</strong><span>${esc(product.brand)} · ${esc(product.range)}</span></div></button>`).join('')||emptyState('search','No wines found','Try a product name, producer or SKU.')}</div></section></div>`;
+  render();
+}
+
+function wineRelationshipModal({ relationId = null, customerId = null, wineId = null } = {}) {
+  const relation=relationId?customerWine(relationId):null;
+  const selectedCustomerId=relation?.customerId||customerId||data.customers[0]?.id||'';
+  const selectedWineId=relation?.wineId||wineId||data.products[0]?.id||'';
+  const item=relation||{status:'Interested',listingDate:null,allocation:'',followUpAt:null,notes:'',history:[]};
+  if(!data.customers.length){customerFormModal();toast('Add a client before assigning a wine.');return;}
+  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="wine-relation-form" data-id="${relation?.id||''}"><div class="handle"></div><div class="modal-head"><h2>${relation?'Update wine':'Add wine to restaurant'}</h2><button type="button" class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><div class="form-group"><label>Restaurant</label>${relation||customerId?`<div class="readonly-field">${esc(customer(selectedCustomerId)?.name||'Client')}</div><input type="hidden" name="customerId" value="${selectedCustomerId}">`:`<select class="field" name="customerId">${data.customers.map(c=>`<option value="${c.id}" ${c.id===selectedCustomerId?'selected':''}>${esc(c.name)}</option>`).join('')}</select>`}</div><div class="form-group"><label>Wine</label>${relation||wineId?`<div class="readonly-field">${esc(wine(selectedWineId)?.name||'Wine')}</div><input type="hidden" name="wineId" value="${selectedWineId}">`:`<select class="field" name="wineId">${data.products.filter(p=>p.active).map(p=>`<option value="${p.id}">${esc(p.name)} — ${esc(p.brand)}</option>`).join('')}</select>`}</div><div class="form-group"><label>Status</label><select class="field" name="status">${WINE_STATUSES.map(status=>`<option ${item.status===status?'selected':''}>${status}</option>`).join('')}</select><small class="field-help">Only Listed counts as a confirmed placement.</small></div><div class="form-grid"><div class="form-group"><label>Listing date</label><input class="field" type="date" name="listingDate" value="${dateInput(item.listingDate)}"></div><div class="form-group"><label>Allocation / quantity</label><input class="field" name="allocation" maxlength="160" value="${esc(item.allocation)}" placeholder="Optional"></div></div><div class="form-group"><label>Follow-up date</label><input class="field" type="date" name="followUp" value="${dateInput(item.followUpAt)}"></div><div class="form-group"><label>Notes</label><textarea class="field" name="notes" maxlength="4000" placeholder="Optional listing or allocation detail">${esc(item.notes)}</textarea></div>${relation&&item.history.length?`<details class="history"><summary>Status history (${item.history.length})</summary>${[...item.history].reverse().slice(0,12).map(event=>`<div><strong>${esc(event.status)}</strong><span>${shortDate(event.at)}${event.note?` · ${esc(event.note)}`:''}</span></div>`).join('')}</details>`:''}<button class="btn btn-primary btn-block sticky-save">Save wine status</button></form></div>`;
+  render();
+}
+
+function visitDetail(id) {
+  const visit=data.visits.find(item=>item.id===id); if(!visit)return;
+  const c=customer(visit.customerId);
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Visit details"><div class="handle"></div><div class="modal-head"><h2>${esc(c?.name||'Visit')}</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>Date</span><strong>${shortDate(visit.start)} · ${time(visit.start)}</strong></div><div class="info-line"><span>Duration</span><strong>${duration(visit.start,visit.end)}</strong></div><div class="info-line"><span>Summary</span><strong>${esc(visit.summary)}</strong></div><div class="info-line"><span>Outcome</span><strong>${esc(visit.outcome)}</strong></div><div class="info-line"><span>Next action</span><strong>${esc(visit.nextAction||'—')}</strong></div></div><div class="section-row"><h2>Wines recorded</h2></div><div class="list">${(visit.wineOutcomes||[]).map(item=>`<div class="card list-card"><div class="dot-icon">${icon('box')}</div><div class="list-card-main"><h3>${esc(wine(item.wineId)?.name||'Wine')}</h3><p>${esc(item.outcome)}</p></div></div>`).join('')||emptyState('box','No wines selected','Older visits may only have note-based product names.')}</div><button class="btn btn-ghost btn-block destructive-link" style="margin-top:14px" data-action="delete-visit" data-id="${visit.id}">Delete this visit</button></section></div>`;
   render();
 }
 
@@ -323,9 +460,20 @@ function startVisitModal(prefill) {
   paint();
 }
 
-function taskModal() {
+function taskModal(taskId = null, prefill = {}) {
   if (!data.customers.length) { customerFormModal(); toast('Add a client before creating a follow-up.'); return; }
-  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="task-form"><div class="handle"></div><div class="modal-head"><h2>New follow-up</h2><button type="button" class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="form-group"><label>Customer</label><select class="field" name="customerId">${data.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div><div class="form-group"><label>What needs to happen?</label><input class="field" name="title" maxlength="1000" required placeholder="Call buyer about trial order"></div><div class="form-group"><label>Due date</label><input class="field" name="due" type="date" required value="${iso(1).slice(0,10)}"></div><button class="btn btn-primary btn-block">Save follow-up</button></form></div>`; render();
+  const existing=taskId?data.tasks.find(item=>item.id===taskId):null;
+  const item=existing||{customerId:prefill.customerId||data.customers[0].id,wineId:prefill.wineId||null,title:prefill.title||'',due:prefill.due||iso(1,9)};
+  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="task-form" data-id="${existing?.id||''}"><div class="handle"></div><div class="modal-head"><h2>${existing?'Edit':'New'} follow-up</h2><button type="button" class="close-btn" data-action="close-modal">${icon('x')}</button></div><div class="form-group"><label>Customer</label><select class="field" name="customerId">${data.customers.map(c=>`<option value="${c.id}" ${item.customerId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div class="form-group"><label>Wine (optional)</label><select class="field" name="wineId"><option value="">General follow-up</option>${data.products.filter(p=>p.active).map(product=>`<option value="${product.id}" ${item.wineId===product.id?'selected':''}>${esc(product.name)}</option>`).join('')}</select></div><div class="form-group"><label>What needs to happen?</label><input class="field" name="title" maxlength="1000" required value="${esc(item.title)}" placeholder="Call buyer about trial order"></div><div class="form-group"><label>Due date</label><input class="field" name="due" type="date" required value="${dateInput(item.due)}"></div><button class="btn btn-primary btn-block">Save follow-up</button>${existing?`<button type="button" class="btn btn-ghost btn-block destructive-link" style="margin-top:8px" data-action="delete-task" data-id="${existing.id}">Delete follow-up</button>`:''}</form></div>`; render();
+}
+
+function tripFormModal(tripId = null) {
+  const existing=tripId?data.travel.trips.find(item=>item.id===tripId):null;
+  const last=[...data.travel.trips].sort((a,b)=>new Date(b.end)-new Date(a.end))[0];
+  const start=currentDate(); const end=new Date(start.getTime()+60000);
+  const item=existing||{start:start.toISOString(),end:end.toISOString(),fromLabel:customer(last?.toCustomerId)?.name||last?.toLabel||'',toLabel:'',customerId:'',purpose:'Customer visit',startOdometer:null,endOdometer:null,distanceKm:0,notes:'',distanceSource:'manual'};
+  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="trip-form" data-id="${existing?.id||''}"><div class="handle"></div><div class="modal-head"><h2>${existing?'Edit':'Add'} business trip</h2><button type="button" class="close-btn" data-action="close-modal">${icon('x')}</button></div><p class="modal-hint">Use odometer readings when available. Otherwise enter the business kilometres once.</p><div class="form-grid"><div class="form-group"><label>Date</label><input class="field" type="date" name="date" required value="${dateInput(item.start)}"></div><div class="form-group"><label>Start time</label><input class="field" type="time" name="time" required value="${new Date(item.start).toTimeString().slice(0,5)}"></div></div><div class="form-grid"><div class="form-group"><label>From</label><input class="field" name="fromLabel" maxlength="500" required value="${esc(customer(item.fromCustomerId)?.name||item.fromLabel||'')}" placeholder="Starting location"></div><div class="form-group"><label>To</label><input class="field" name="toLabel" maxlength="500" value="${esc(customer(item.toCustomerId)?.name||item.toLabel||'')}" placeholder="Destination"></div></div><div class="form-group"><label>Restaurant / account</label><select class="field" name="customerId"><option value="">No account</option>${data.customers.map(c=>`<option value="${c.id}" ${item.customerId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div class="form-group"><label>Business purpose *</label><input class="field" name="purpose" maxlength="500" required value="${esc(item.purpose||'Customer visit')}" placeholder="Customer visit"></div><div class="form-grid"><div class="form-group"><label>Start odometer</label><input class="field" type="number" name="startOdometer" min="0" max="10000000" step="0.1" value="${item.startOdometer??''}" placeholder="Optional"></div><div class="form-group"><label>End odometer</label><input class="field" type="number" name="endOdometer" min="0" max="10000000" step="0.1" value="${item.endOdometer??''}" placeholder="Optional"></div></div><div class="form-group"><label>KM (used when odometer is blank)</label><input class="field" type="number" name="distanceKm" min="0" max="100000" step="0.1" value="${Number(item.distanceKm)||''}" placeholder="0.0"></div><div class="form-group"><label>Notes</label><textarea class="field" name="notes" maxlength="4000" placeholder="Optional evidence or explanation">${esc(item.notes||'')}</textarea></div><button class="btn btn-primary btn-block sticky-save">Save trip</button>${existing?`<button type="button" class="btn btn-ghost btn-block destructive-link" style="margin-top:8px" data-action="delete-trip" data-id="${existing.id}">Delete trip</button>`:''}</form></div>`;
+  render();
 }
 
 function customerFormModal(customerId = null) {
@@ -358,7 +506,7 @@ function settingsModal() {
     : cloudState.signedIn
       ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div></div>`
       : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Pilot access is invitation-only. Sign in with the account created for you to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="Your password"></div><button class="btn btn-primary btn-block" type="submit">Sign in</button>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
-  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div></div>${cloudPanel}<p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
+  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div><div class="info-line"><span>KM rate</span><strong>${currency(data.travel.ratePerKm)}/km</strong></div></div>${cloudPanel}<div class="card info-card"><h3>Device backup</h3><p class="muted-copy">Download a complete copy before changing phones or clearing browser data.</p><div class="form-grid"><button class="btn btn-secondary" data-action="export-backup">${icon('download')} Export</button><button class="btn btn-ghost" data-action="import-backup">Import</button></div><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block destructive-link" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
 }
 
 function installHelpModal() {
@@ -388,15 +536,18 @@ function render() {
 
 function answerQuestion(q) {
   const lower=q.toLowerCase(); const pending=data.tasks.filter(t=>!t.done).sort((a,b)=>new Date(a.due)-new Date(b.due));
-  if (/mileage|kilomet|travel|reimburse|claim/.test(lower)) { const weekTrips=data.travel.trips.filter(t=>new Date(t.start)>new Date(Date.now()-7*DAY));const km=weekTrips.reduce((sum,t)=>sum+t.distanceKm,0);return `Your last 7 days total ${km.toFixed(1)} km. At ${currency(data.travel.ratePerKm)} per km, the reimbursement is ${currency(reimbursement(km))}.`; }
-  if (/follow.?up|due|overdue/.test(lower)) return pending.length ? `You have ${pending.length} open follow-ups. Start with ${customer(pending[0].customerId)?.name}: ${pending[0].title.toLowerCase()} (${dayLabel(pending[0].due)}).` : 'You have no open follow-ups.';
+  if (/mileage|kilomet|travel|reimburse|claim/.test(lower)) { const weekTrips=data.travel.trips.filter(t=>new Date(t.start)>new Date(Date.now()-7*DAY));const km=weekTrips.reduce((sum,t)=>sum+Number(t.distanceKm||0),0),claim=weekTrips.reduce((sum,t)=>sum+Number(t.reimbursement||0),0);return `Your last 7 days total ${km.toFixed(1)} km across ${weekTrips.length} trips. The saved reimbursement is ${currency(claim)}.`; }
+  if (/follow.?up|due|overdue/.test(lower)) { const first=pending[0],product=wine(first?.wineId);return pending.length ? `You have ${pending.length} open follow-ups. Start with ${customer(first.customerId)?.name}${product?` about ${product.name}`:''}: ${first.title.toLowerCase()} (${dayLabel(first.due)}).` : 'You have no open follow-ups.'; }
   if (/not visited|recently|neglect/.test(lower)) { const sorted=[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit)); if(!sorted.length)return 'Add your first client and I will track who has not been visited.'; return sorted.length===1?`${sorted[0].name} has ${sorted[0].lastVisit?`not been visited since ${dayLabel(sorted[0].lastVisit)}`:'not been visited yet'}.`:`${sorted[0].name} needs a visit most — last seen ${dayLabel(sorted[0].lastVisit)}. ${sorted[1].name} is next.`; }
   if (/today|prioriti|plan|do next/.test(lower)) { if(!data.customers.length)return 'Start by adding your first client. Then I can build your daily visit and follow-up plan.'; return pending.length ? `Today: 1) ${pending[0].title} for ${customer(pending[0].customerId)?.name}. 2) Visit ${[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit))[0].name}. 3) Clear any new notes before you finish.` : 'Your follow-ups are clear. Prioritise the customer with the oldest visit date.'; }
   if (/last visit|what happened/.test(lower)) { const visit=[...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start))[0]; return visit?`Your last visit was to ${customer(visit.customerId)?.name||'a client'} on ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction||'None recorded'}.`:'You have no recorded visits yet.'; }
   const named=data.customers.find(c=>lower.includes(c.name.toLowerCase())||lower.includes(c.name.split(' ')[0].toLowerCase()));
-  if (named) { const visit=data.visits.filter(v=>v.customerId===named.id).sort((a,b)=>new Date(b.start)-new Date(a.start))[0]; return visit ? `Last visit to ${named.name} was ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction}.` : `${named.name} has no recorded visits yet.`; }
-  if (/product|discussed|range/.test(lower)) { const counts={}; data.visits.flatMap(v=>v.products).forEach(p=>counts[p]=(counts[p]||0)+1); const top=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]; return top?`${top[0]} is the most discussed product in your recorded visits (${top[1]} mentions).`:'No product discussions are recorded yet.'; }
-  return 'I can help with follow-ups, customers not visited recently, last-visit notes, products discussed, and today’s priorities.';
+  if (named) { const visit=data.visits.filter(v=>v.customerId===named.id).sort((a,b)=>new Date(b.start)-new Date(a.start))[0],listings=winesForCustomer(named.id).filter(item=>item.status==='Listed').map(item=>wine(item.wineId)?.name).filter(Boolean); return visit ? `Last visit to ${named.name} was ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction||'None recorded'}. Current listings: ${listings.join(', ')||'none recorded'}.` : `${named.name} has no recorded visits yet. Current listings: ${listings.join(', ')||'none recorded'}.`; }
+  const namedWine=data.products.find(product=>lower.includes(product.name.toLowerCase()));
+  if(namedWine&&/where|listed|interest|pipeline/.test(lower)){const listed=customersForWine(namedWine.id).filter(item=>item.status==='Listed').map(item=>customer(item.customerId)?.name).filter(Boolean),pipeline=customersForWine(namedWine.id).filter(item=>PIPELINE_STATUSES.includes(item.status)).map(item=>customer(item.customerId)?.name).filter(Boolean);return `${namedWine.name} is listed at ${listed.join(', ')||'no restaurants yet'}. Pipeline: ${pipeline.join(', ')||'none recorded'}.`;}
+  if (/listing|listed|placement/.test(lower)) return `You have ${activeListings().length} confirmed active listings across ${new Set(activeListings().map(item=>item.customerId)).size} restaurants. Interested or sampled wines are not included.`;
+  if (/product|wine|discussed|range/.test(lower)) { const counts={}; data.visits.flatMap(v=>v.wineOutcomes||[]).forEach(item=>{const name=wine(item.wineId)?.name;if(name)counts[name]=(counts[name]||0)+1;}); const top=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]; return top?`${top[0]} is the most discussed wine in your recorded visits (${top[1]} mentions).`:'No wine discussions are recorded yet.'; }
+  return 'I can help with follow-ups, listings, wine pipeline, customers not visited recently, last-visit notes, mileage and today’s priorities.';
 }
 
 function ask(q) { if(!q.trim())return; data.chat.push({role:'user',text:q.trim()},{role:'ai',text:answerQuestion(q)});if(data.chat.length>500){data.chat=data.chat.slice(-500);toast('Older assistant messages were removed to keep cloud backup reliable.');}save();screen='assistant';render(); }
@@ -440,25 +591,53 @@ function startTravelTracking() {
   if (data.travel.activeTrip) { screen='travel'; resumeTravelTracking(); render(); return; }
   captureDeviceLocation(point => {
     const nearest = nearestCustomer(point);
-    data.travel.activeTrip = { id:`trip${Date.now()}`, start:new Date().toISOString(), points:[point], fromCustomerId:nearest?.km<=.5?nearest.customer.id:null, fromLabel:nearest?.km<=.5?'':`GPS ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`, lastAccuracy:point.accuracy };
+    data.travel.activeTrip = { id:`trip${Date.now()}`, start:new Date().toISOString(), points:[point], fromCustomerId:nearest?.km<=.5?nearest.customer.id:null, fromLabel:nearest?.km<=.5?'':`GPS ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`, purpose:'Customer visit', lastAccuracy:point.accuracy };
     save(); screen='travel'; render(); resumeTravelTracking(); toast('Mileage tracking started');
   }, 'Allow precise location to record business travel.');
 }
 
-function stopTravelTracking() {
+function stopTravelTracking({ customerId = null, endPoint = null, purpose = 'Customer visit', promptDetails = true } = {}) {
   const active = data.travel.activeTrip;
   if (!active) return;
   if (locationWatchId !== null) { navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
+  if (endPoint && Number.isFinite(endPoint.lat) && Number.isFinite(endPoint.lng)) {
+    const previous=active.points.at(-1);
+    if (!previous || geoDistanceKm(previous,endPoint)>.005) active.points.push(endPoint);
+  }
   const last = active.points.at(-1) || data.travel.lastPosition;
   const nearest = last ? nearestCustomer(last) : null;
   const distanceKm = routeDistanceKm(active.points);
-  data.travel.trips.push({ id:active.id, start:active.start, end:new Date().toISOString(), points:active.points, fromCustomerId:active.fromCustomerId, toCustomerId:nearest?.km<=.5?nearest.customer.id:null, fromLabel:active.fromLabel, toLabel:nearest?.km<=.5?'':last?`GPS ${last.lat.toFixed(5)}, ${last.lng.toFixed(5)}`:'End location', distanceKm, ratePerKm:data.travel.ratePerKm, reimbursement:reimbursement(distanceKm) });
+  const destinationId=customerId||(nearest?.km<=.5?nearest.customer.id:null);
+  data.travel.trips.push({ id:active.id, start:active.start, end:new Date().toISOString(), points:active.points, fromCustomerId:active.fromCustomerId, toCustomerId:destinationId, customerId:destinationId, fromLabel:active.fromLabel, toLabel:destinationId?'':last?`GPS ${last.lat.toFixed(5)}, ${last.lng.toFixed(5)}`:'End location', purpose:purpose||active.purpose||'Business travel', startOdometer:null, endOdometer:null, notes:'', distanceSource:'gps', distanceKm, ratePerKm:data.travel.ratePerKm, reimbursement:distanceKm*data.travel.ratePerKm });
   data.travel.activeTrip=null; save(); render(); toast(`${distanceKm.toFixed(1)} km saved · ${currency(reimbursement(distanceKm))} claim`);
+  if(promptDetails) tripFormModal(active.id);
+}
+
+function downloadFile(filename, content, type) {
+  const url=URL.createObjectURL(new Blob([content],{type}));
+  const link=document.createElement('a'); link.href=url; link.download=filename; document.body.append(link); link.click(); link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function exportBackup(suffix = '') {
+  const stamp=currentDate().toISOString().slice(0,10);
+  downloadFile(`fieldflow-backup-${stamp}${suffix?`-${suffix}`:''}.json`,JSON.stringify({format:'fieldflow-backup',version:2,exportedAt:new Date().toISOString(),workspace:data},null,2),'application/json');
+  toast('Complete FieldFlow backup downloaded');
+}
+
+const csvCell = value => `"${String(value??'').replaceAll('"','""')}"`;
+function exportKmCsv() {
+  let range;try{range=dateRange(travelPeriod,travelCustomStart,travelCustomEnd);}catch{range=dateRange('month');}
+  const trips=data.travel.trips.filter(trip=>isInRange(trip.start,range)).sort((a,b)=>new Date(a.start)-new Date(b.start));
+  const rows=[['Date','From','To','Restaurant','Business Purpose','Start Odometer','End Odometer','KM','Rate','Reimbursement','Notes'],...trips.map(trip=>[dateInput(trip.start),customer(trip.fromCustomerId)?.name||trip.fromLabel||'',customer(trip.toCustomerId)?.name||trip.toLabel||'',customer(trip.customerId)?.name||'',trip.purpose||'Business travel',trip.startOdometer??'',trip.endOdometer??'',Number(trip.distanceKm||0).toFixed(1),Number(trip.ratePerKm||data.travel.ratePerKm).toFixed(2),Number(trip.reimbursement||0).toFixed(2),trip.notes||''])];
+  rows.push(['TOTAL BUSINESS KM','','','','','','',trips.reduce((sum,trip)=>sum+Number(trip.distanceKm||0),0).toFixed(1),'',trips.reduce((sum,trip)=>sum+Number(trip.reimbursement||0),0).toFixed(2),'']);
+  downloadFile(`fieldflow-km-${dateInput(range.start)}-to-${dateInput(new Date(range.end.getTime()-DAY))}.csv`,rows.map(row=>row.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+  toast('KM report exported');
 }
 
 document.addEventListener('click', async event => {
   const target=event.target.closest('[data-screen],[data-action]'); if(!target)return;
-  if(target.dataset.screen){screen=target.dataset.screen; if(target.dataset.filter)filter=target.dataset.filter; else if(screen!=='customers')filter='All'; query=''; modal=null; render(); return;}
+  if(target.dataset.screen){screen=target.dataset.screen; filter=target.dataset.filter||'All'; query=''; modalQuery=''; modal=null; render(); return;}
   const action=target.dataset.action;
   if(action==='close-modal'){
     if(target.classList.contains('modal-backdrop') && event.target !== target) return;
@@ -469,15 +648,22 @@ document.addEventListener('click', async event => {
   else if(action==='select-visit-customer'){startVisitModal(target.dataset.id);}
   else if(action==='confirm-start'){
     const c=customer(target.dataset.id); target.disabled=true; target.innerHTML=`${icon('pin')} Capturing location…`;
-    const finish=(coords,label)=>{if(data.travel.activeTrip)stopTravelTracking();const point=coords?{lat:coords.latitude,lng:coords.longitude,accuracy:coords.accuracy,capturedAt:new Date().toISOString()}:null;if(point)data.travel.lastPosition=point;const firstPin=point&&!hasCustomerLocation(c);if(firstPin){c.lat=point.lat;c.lng=point.lng;}const venueDistance=point?geoDistanceKm(point,{lat:c.lat,lng:c.lng}):Infinity;const locationLabel=firstPin?'Venue pinned from first visit':point?`${label} · ${distanceLabel(venueDistance)} from venue`:label;data.activeVisit={id:`v${Date.now()}`,customerId:c.id,start:new Date().toISOString(),lat:point?.lat??c.lat,lng:point?.lng??c.lng,locationLabel,note:''};save();modal=null;screen='visit';render();toast(firstPin?'Visit started and client location pinned':'Visit started and location saved');};
+    const finish=(coords,label)=>{const point=coords?{lat:coords.latitude,lng:coords.longitude,accuracy:coords.accuracy,capturedAt:new Date().toISOString()}:null;if(data.travel.activeTrip)stopTravelTracking({customerId:c.id,endPoint:point,purpose:'Customer visit',promptDetails:false});if(point)data.travel.lastPosition=point;const firstPin=point&&!hasCustomerLocation(c);if(firstPin){c.lat=point.lat;c.lng=point.lng;}const venueDistance=point?geoDistanceKm(point,{lat:c.lat,lng:c.lng}):Infinity;const locationLabel=firstPin?'Venue pinned from first visit':point?`${label} · ${distanceLabel(venueDistance)} from venue`:label;data.activeVisit={id:`v${Date.now()}`,customerId:c.id,start:new Date().toISOString(),lat:point?.lat??c.lat,lng:point?.lng??c.lng,locationLabel,note:'',wineOutcomes:[]};save();modal=null;screen='visit';render();toast(firstPin?'Visit started and client location pinned':'Visit started and location saved');};
     if(navigator.geolocation) navigator.geolocation.getCurrentPosition(p=>finish(p.coords,'Live location captured'),()=>finish(null,'Venue location used'),{enableHighAccuracy:true,timeout:6000,maximumAge:60000}); else finish(null,'Venue location used');
   }
   else if(action==='customer')customerDetail(target.dataset.id);
+  else if(action==='visit-detail')visitDetail(target.dataset.id);
+  else if(action==='product-detail')productDetail(target.dataset.id);
   else if(action==='add-customer')customerFormModal();
   else if(action==='edit-customer')customerFormModal(target.dataset.id);
   else if(action==='filter'){filter=target.dataset.value;render();}
   else if(action==='product-brand'){productFilter=target.dataset.value;query='';render();}
+  else if(action==='product-status-filter'){productRelationshipFilter=target.dataset.value;query='';render();}
   else if(action==='activity-mode'){filter=target.dataset.value==='tasks'?'tasks':'All';query='';render();}
+  else if(action==='report-period'){reportPeriod=target.dataset.value;render();}
+  else if(action==='travel-period'){travelPeriod=target.dataset.value;render();}
+  else if(action==='apply-report-range'){reportCustomStart=document.getElementById('report-custom-start')?.value||'';reportCustomEnd=document.getElementById('report-custom-end')?.value||'';try{dateRange('custom',reportCustomStart,reportCustomEnd);render();}catch(error){toast(error.message);}}
+  else if(action==='apply-travel-range'){travelCustomStart=document.getElementById('travel-custom-start')?.value||'';travelCustomEnd=document.getElementById('travel-custom-end')?.value||'';try{dateRange('custom',travelCustomStart,travelCustomEnd);render();}catch(error){toast(error.message);}}
   else if(action==='locate-customers'){
     const stayOnTravel=screen==='travel';
     target.disabled=true;
@@ -489,21 +675,40 @@ document.addEventListener('click', async event => {
   }
   else if(action==='start-travel')startTravelTracking();
   else if(action==='stop-travel')stopTravelTracking();
-  else if(action==='toggle-task'){const t=data.tasks.find(x=>x.id===target.dataset.id);t.done=!t.done;save();render();toast(t.done?'Follow-up completed':'Follow-up reopened');}
+  else if(action==='add-trip')tripFormModal();
+  else if(action==='edit-trip')tripFormModal(target.dataset.id);
+  else if(action==='delete-trip'){const trip=data.travel.trips.find(item=>item.id===target.dataset.id);if(!trip||!confirm(`Delete the ${Number(trip.distanceKm||0).toFixed(1)} km trip? This cannot be undone.`))return;data.travel.trips=data.travel.trips.filter(item=>item.id!==trip.id);save();modal=null;render();toast('Trip deleted');}
+  else if(action==='toggle-task'){const t=data.tasks.find(x=>x.id===target.dataset.id);t.done=!t.done;t.completedAt=t.done?new Date().toISOString():null;if(t.wineId){const relation=findCustomerWine(data,t.customerId,t.wineId);if(relation)relation.followUpAt=t.done?null:t.due;}save();render();toast(t.done?'Follow-up completed':'Follow-up reopened');}
   else if(action==='add-task')taskModal();
+  else if(action==='edit-task')taskModal(target.dataset.id);
+  else if(action==='delete-task'){if(!confirm('Delete this follow-up?'))return;const task=data.tasks.find(item=>item.id===target.dataset.id);if(task?.wineId){const relation=findCustomerWine(data,task.customerId,task.wineId);if(relation?.followUpAt===task.due)relation.followUpAt=null;}data.tasks=data.tasks.filter(item=>item.id!==target.dataset.id);save();modal=null;render();toast('Follow-up deleted');}
+  else if(action==='add-visit-wine'){modalQuery='';winePickerModal('visit');}
+  else if(action==='pick-visit-wine'){if(!data.activeVisit.wineOutcomes.some(item=>item.wineId===target.dataset.id))data.activeVisit.wineOutcomes.push({wineId:target.dataset.id,outcome:'Discussed'});save();modal=null;render();toast('Wine added to visit');}
+  else if(action==='remove-visit-wine'){data.activeVisit.wineOutcomes=data.activeVisit.wineOutcomes.filter(item=>item.wineId!==target.dataset.id);save();render();}
+  else if(action==='add-customer-wine'){modalQuery='';winePickerModal('customer',target.dataset.id);}
+  else if(action==='pick-customer-wine'){wineRelationshipModal({customerId:target.dataset.customerId,wineId:target.dataset.id});}
+  else if(action==='edit-customer-wine')wineRelationshipModal({relationId:target.dataset.id});
+  else if(action==='assign-product')wineRelationshipModal({wineId:target.dataset.id});
+  else if(action==='set-wine-status'){const relation=customerWine(target.dataset.id);if(!relation)return;upsertCustomerWine(data,{customerId:relation.customerId,wineId:relation.wineId,status:target.dataset.status,allocation:relation.allocation,notes:relation.notes,followUpAt:relation.followUpAt});save();customerDetail(relation.customerId);toast(target.dataset.status==='Listed'?'Confirmed listing saved':'Delisting saved; history retained');}
+  else if(action==='wine-follow-up'){const relation=customerWine(target.dataset.id);taskModal(null,{customerId:relation.customerId,wineId:relation.wineId,title:`Follow up on ${wine(relation.wineId)?.name||'wine'}`,due:relation.followUpAt||iso(1,9)});}
+  else if(action==='delete-visit'){const visit=data.visits.find(item=>item.id===target.dataset.id);if(!visit||!confirm('Delete this visit record? Wine status history will be retained.'))return;data.visits=data.visits.filter(item=>item.id!==visit.id);const c=customer(visit.customerId);const latest=data.visits.filter(item=>item.customerId===visit.customerId).sort((a,b)=>new Date(b.start)-new Date(a.start))[0];if(c)c.lastVisit=latest?.start||null;save();modal=null;render();toast('Visit deleted');}
   else if(action==='voice')startVoiceCapture();
-  else if(action==='structure-note'){const box=document.getElementById('visit-note');data.activeVisit.note=box.value;save();render();toast('Note structured — check the suggested fields');}
+  else if(action==='structure-note'){const box=document.getElementById('visit-note');data.activeVisit.note=box.value;const structured=structureNote(box.value);for(const name of structured.products){const product=data.products.find(item=>item.name===name);if(product&&!data.activeVisit.wineOutcomes.some(item=>item.wineId===product.id))data.activeVisit.wineOutcomes.push({wineId:product.id,outcome:'Discussed'});}save();render();toast('Note structured — check the suggested fields');}
   else if(action==='end-visit'){
     const note=document.getElementById('visit-note')?.value||data.activeVisit.note||''; const s=structureNote(note); const active=data.activeVisit; const c=customer(active.customerId);
-    data.visits.push({id:active.id,customerId:active.customerId,start:active.start,end:new Date().toISOString(),lat:active.lat,lng:active.lng,summary:s.summary,products:s.products,outcome:s.outcome,nextAction:s.nextAction||'Review visit note',followUp:s.followUp,source:'voice'});
+    const selected=[...(active.wineOutcomes||[])];for(const name of s.products){const product=data.products.find(item=>item.name===name);if(product&&!selected.some(item=>item.wineId===product.id))selected.push({wineId:product.id,outcome:'Discussed'});}const visit={id:active.id,customerId:active.customerId,start:active.start,end:new Date().toISOString(),lat:active.lat,lng:active.lng,summary:s.summary,products:selected.map(item=>wine(item.wineId)?.name).filter(Boolean),wineOutcomes:selected,outcome:s.outcome,nextAction:s.nextAction||'',followUp:s.followUp,source:active.source||'typed'};data.visits.push(visit);applyVisitWineOutcomes(data,visit,s.followUp||iso(1,9));
     c.lastVisit=active.start;
-    if(s.nextAction) data.tasks.push({id:`t${Date.now()}`,customerId:c.id,title:s.nextAction,due:s.followUp||iso(1,9),done:false,priority:'Next'});
-    data.activeVisit=null;save();screen='home';render();toast('Visit saved. Follow-up added.');
+    let tasksAdded=0;for(const item of selected.filter(item=>item.outcome==='Follow-up required')){createFollowUp({customerId:c.id,wineId:item.wineId,visitId:visit.id,title:`Follow up on ${wine(item.wineId)?.name||'wine'}`,due:item.followUpAt||s.followUp||iso(1,9)});tasksAdded++;}if(s.nextAction){createFollowUp({customerId:c.id,visitId:visit.id,title:s.nextAction,due:s.followUp||iso(1,9)});tasksAdded++;}
+    data.activeVisit=null;save();screen='home';render();toast(tasksAdded?'Visit saved and follow-up added':'Visit saved');
   }
   else if(action==='ask')ask(target.dataset.value);
   else if(action==='email-pricelist')emailPriceList();
   else if(action==='print-pricelist')window.print();
+  else if(action==='export-km')exportKmCsv();
+  else if(action==='print-km')window.print();
   else if(action==='share-report')emailReport();
+  else if(action==='export-backup')exportBackup();
+  else if(action==='import-backup')document.getElementById('backup-file')?.click();
   else if(action==='cloud-sync'){target.disabled=true;await syncCloudNow(true);settingsModal();toast(cloudState.error?'Sync needs attention':'Cloud backup is up to date');}
   else if(action==='cloud-signout'){target.disabled=true;try{await signOutCloud();modal=null;render();toast('Signed out. Account data is locked on this device.');}catch(error){toast(error.message);}}
   else if(action==='install-app'){
@@ -521,12 +726,31 @@ document.addEventListener('click', async event => {
     const fallback=encodeURIComponent(secureUrl);
     window.location.href=`intent://ernest01982.github.io/onconapp/#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${fallback};end`;
   }
-  else if(action==='clear-crm-data'){if(!confirm('Clear all customers, visits, follow-ups and mileage? This also clears them from cloud backup and cannot be undone.'))return;const profile=clone(data.profile);const products=clone(data.products?.length?data.products:realProducts);data=clone(seed);data.profile=profile;data.products=products;save();modal=null;screen='home';render();toast('CRM activity cleared. Your real price list remains.');}
+  else if(action==='clear-crm-data'){if(!confirm('Clear all customers, visits, wine relationships, follow-ups and mileage? Export a backup first. This also clears cloud backup and cannot be undone.'))return;const profile=clone(data.profile);const products=clone(data.products?.length?data.products:realProducts);data=normalizeWorkspace(clone(seed),products);data.profile=profile;data.products=products;save();modal=null;screen='home';render();toast('CRM activity cleared. Your real price list remains.');}
 });
 
 document.addEventListener('input', event => {
   if(event.target.id==='search'){query=event.target.value; const pos=event.target.selectionStart;render();const input=document.getElementById('search');input?.focus();input?.setSelectionRange(pos,pos);}
+  if(event.target.id==='wine-picker-search'){modalQuery=event.target.value;const pos=event.target.selectionStart;winePickerModal(pickerContext?.mode||'visit',pickerContext?.customerId||null);const input=document.getElementById('wine-picker-search');input?.focus();input?.setSelectionRange(pos,pos);}
   if(event.target.id==='visit-note'&&data.activeVisit){data.activeVisit.note=event.target.value;save();}
+});
+
+document.addEventListener('change', async event => {
+  if(event.target.matches('[data-visit-wine-outcome]')&&data.activeVisit){const item=data.activeVisit.wineOutcomes.find(entry=>entry.wineId===event.target.dataset.visitWineOutcome);if(item){item.outcome=event.target.value;save();}}
+  if(event.target.id==='backup-file'&&event.target.files?.[0]){
+    try{
+      const parsed=JSON.parse(await event.target.files[0].text());
+      if(parsed?.format!=='fieldflow-backup'||!parsed.workspace||!Array.isArray(parsed.workspace.customers)||!Array.isArray(parsed.workspace.visits))throw new Error('This is not a valid FieldFlow backup.');
+      if(!confirm('Import this backup and replace the current workspace? A safety copy will be downloaded first.'))return;
+      exportBackup('before-import');
+      data=normalizeWorkspace({...clone(seed),...parsed.workspace,products:parsed.workspace.products?.length?parsed.workspace.products:realProducts},realProducts);
+      save();modal=null;screen=data.activeVisit?'visit':'home';render();toast('Backup imported successfully');
+    }catch(error){toast(error.message||'Could not import this backup.');}
+  }
+});
+
+document.addEventListener('keydown', event => {
+  if((event.key==='Enter'||event.key===' ')&&event.target.matches('article[data-action], .interactive[data-action]')){event.preventDefault();event.target.click();}
 });
 
 document.addEventListener('submit', async event => {
@@ -537,12 +761,27 @@ document.addEventListener('submit', async event => {
     [...event.target.querySelectorAll('button')].forEach(button=>button.disabled=true);
     try{await signInWithEmail(email,password);toast('Signed in. Your cloud data is loading.');}catch(error){toast(error.message);settingsModal();}
   }
-  if(event.target.id==='task-form'){const fd=new FormData(event.target);data.tasks.push({id:`t${Date.now()}`,customerId:fd.get('customerId'),title:fd.get('title'),due:new Date(`${fd.get('due')}T09:00:00`).toISOString(),done:false,priority:'Next'});save();modal=null;render();toast('Follow-up added');}
+  if(event.target.id==='task-form'){const fd=new FormData(event.target);const id=event.target.dataset.id;const existing=id?data.tasks.find(item=>item.id===id):null;const values={customerId:String(fd.get('customerId')),wineId:String(fd.get('wineId')||'')||null,title:String(fd.get('title')||'').trim(),due:dateTimeAtNine(String(fd.get('due'))),priority:existing?.priority||'Next'};if(existing)Object.assign(existing,values);else data.tasks.push({id:`t${Date.now()}`,...values,visitId:null,done:false,completedAt:null});if(values.wineId){const relation=findCustomerWine(data,values.customerId,values.wineId);if(relation)relation.followUpAt=values.due;}save();modal=null;render();toast(existing?'Follow-up updated':'Follow-up added');}
+  if(event.target.id==='wine-relation-form'){
+    const fd=new FormData(event.target);const existing=event.target.dataset.id?customerWine(event.target.dataset.id):null;const customerId=String(fd.get('customerId')),wineId=String(fd.get('wineId')),status=String(fd.get('status')),followUpAt=dateTimeAtNine(String(fd.get('followUp')||''));
+    const relation=upsertCustomerWine(data,{customerId,wineId,status,listingDate:dateTimeAtNine(String(fd.get('listingDate')||'')),allocation:String(fd.get('allocation')||''),notes:String(fd.get('notes')||''),followUpAt});
+    if(followUpAt)createFollowUp({customerId,wineId,title:`Follow up on ${wine(wineId)?.name||'wine'}`,due:followUpAt});
+    save();modal=null;customerDetail(customerId);toast(existing?'Wine status updated':'Wine linked to restaurant');
+  }
+  if(event.target.id==='trip-form'){
+    const fd=new FormData(event.target);const id=event.target.dataset.id;const existing=id?data.travel.trips.find(item=>item.id===id):null;
+    try{
+      const result=calculateTripDistance({startOdometer:fd.get('startOdometer'),endOdometer:fd.get('endOdometer'),manualDistance:fd.get('distanceKm'),gpsDistance:existing?.distanceSource==='gps'?existing.distanceKm:0});
+      const start=new Date(`${fd.get('date')}T${fd.get('time')}:00`);if(Number.isNaN(start.getTime()))throw new Error('Choose a valid trip date and time.');const originalDuration=existing?Math.max(60000,new Date(existing.end)-new Date(existing.start)):60000;const customerId=String(fd.get('customerId')||'')||null;const rate=Number(existing?.ratePerKm||data.travel.ratePerKm);
+      const values={start:start.toISOString(),end:new Date(start.getTime()+originalDuration).toISOString(),points:existing?.points||[],fromCustomerId:existing?.fromCustomerId||null,toCustomerId:customerId||existing?.toCustomerId||null,customerId,fromLabel:String(fd.get('fromLabel')||'').trim(),toLabel:String(fd.get('toLabel')||'').trim()||(customerId?customer(customerId)?.name:''),purpose:String(fd.get('purpose')||'').trim(),startOdometer:result.startOdometer,endOdometer:result.endOdometer,notes:String(fd.get('notes')||'').trim(),distanceSource:result.distanceSource,distanceKm:result.distanceKm,ratePerKm:rate,reimbursement:result.distanceKm*rate};
+      if(existing)Object.assign(existing,values);else data.travel.trips.push({id:`trip${Date.now()}`,...values});save();modal=null;screen='travel';render();toast(existing?'Trip updated':'Business trip added');
+    }catch(error){toast(error.message);}
+  }
   if(event.target.id==='customer-form'){
     const fd=new FormData(event.target); const id=event.target.dataset.id; const existing=id?customer(id):null; const useCurrent=fd.get('useCurrentLocation')==='on'&&data.travel.lastPosition;
     const values={name:String(fd.get('name')).trim(),type:String(fd.get('type')),area:String(fd.get('area')).trim(),address:String(fd.get('address')).trim(),contact:String(fd.get('contact')).trim(),role:String(fd.get('role')).trim(),email:String(fd.get('email')).trim(),phone:String(fd.get('phone')).trim(),opportunity:String(fd.get('opportunity')).trim(),value:Number(fd.get('value'))||0};
     if(existing){Object.assign(existing,values);if(useCurrent){existing.lat=data.travel.lastPosition.lat;existing.lng=data.travel.lastPosition.lng;}}
-    else {data.customers.push({id:`c${Date.now()}`,...values,lastVisit:null,lat:useCurrent?data.travel.lastPosition.lat:null,lng:useCurrent?data.travel.lastPosition.lng:null});}
+    else {data.customers.push({id:`c${Date.now()}`,...values,lastVisit:null,lat:useCurrent?data.travel.lastPosition.lat:null,lng:useCurrent?data.travel.lastPosition.lng:null,createdAt:new Date().toISOString()});}
     save();modal=null;screen='customers';filter='All';query='';render();toast(existing?'Client details updated':'New client added');
   }
 });
@@ -556,10 +795,10 @@ function startVoiceCapture(){
   recognition.onend=()=>{button.classList.remove('listening');help.textContent='Captured. Tap “Structure my note” to review it.';};recognition.start();
 }
 
-function selectedProducts(){return data.products.filter(p=>p.active&&(productFilter==='All'||p.brand===productFilter));}
+function selectedProducts(){return data.products.filter(p=>p.active&&(productFilter==='All'||p.brand===productFilter)&&(productRelationshipFilter==='All'||customersForWine(p.id).some(item=>productRelationshipFilter==='Listed'?item.status==='Listed':productRelationshipFilter==='Interested'?PIPELINE_STATUSES.includes(item.status):item.followUpAt&&new Date(item.followUpAt)<=new Date())));}
 function priceListText(){return selectedProducts().map(p=>`${p.sku} · ${p.name} (${p.pack}) — case ${currency(p.price)}${p.unitPrice!=null?`, unit ${currency(p.unitPrice)}`:''} incl. VAT`).join('\n');}
 function emailPriceList(){const listName=productFilter==='All'?'Complete portfolio':productFilter;const subject=`Niew Beverages On Con price list — ${listName}`;const body=`Hi,\n\nPlease find the Niew Beverages On Con pricing effective 1 March 2026 below. Prices include VAT.\n\n${priceListText()}\n\nPlease let me know if you would like to place an order or confirm availability.\n\nRegards,\n${data.profile.name}`;window.location.href=`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;}
-function emailReport(){const visits=data.visits.filter(v=>new Date(v.start)>new Date(Date.now()-7*DAY));const trips=data.travel.trips.filter(t=>new Date(t.start)>new Date(Date.now()-7*DAY));const km=trips.reduce((sum,t)=>sum+t.distanceKm,0);const mins=visits.reduce((n,v)=>n+(new Date(v.end)-new Date(v.start))/60000,0);const body=`Weekly field activity\n\nVisits: ${visits.length}\nCustomers seen: ${new Set(visits.map(v=>v.customerId)).size}\nTime in trade: ${Math.round(mins/60)} hours\nOpen follow-ups: ${data.tasks.filter(t=>!t.done).length}\nBusiness travel: ${km.toFixed(1)} km\nMileage rate: ${currency(data.travel.ratePerKm)} per km\nReimbursement claim: ${currency(reimbursement(km))}\nOpen opportunity value: ${currency(data.customers.reduce((s,c)=>s+c.value,0))}`;window.location.href=`mailto:?subject=${encodeURIComponent('Weekly field sales activity and mileage')}&body=${encodeURIComponent(body)}`;}
+function emailReport(){let range;try{range=dateRange(reportPeriod,reportCustomStart,reportCustomEnd);}catch{range=dateRange('week');}const visits=data.visits.filter(v=>isInRange(v.start,range)),trips=data.travel.trips.filter(t=>isInRange(t.start,range)),km=trips.reduce((sum,t)=>sum+Number(t.distanceKm||0),0),claim=trips.reduce((sum,t)=>sum+Number(t.reimbursement||0),0),mins=visits.reduce((n,v)=>n+(new Date(v.end)-new Date(v.start))/60000,0),pipeline=data.customerWines.filter(item=>PIPELINE_STATUSES.includes(item.status));const body=`Field activity — ${range.label}\n\nVisits: ${visits.length}\nCustomers seen: ${new Set(visits.map(v=>v.customerId)).size}\nTime in trade: ${Math.round(mins/60)} hours\nOpen follow-ups: ${data.tasks.filter(t=>!t.done).length}\nWine pipeline: ${pipeline.length}\nConfirmed active listings: ${activeListings().length}\nBusiness travel: ${km.toFixed(1)} km across ${trips.length} trips\nReimbursement claim: ${currency(claim)}\nOpen opportunity value: ${currency(data.customers.reduce((s,c)=>s+c.value,0))}`;window.location.href=`mailto:?subject=${encodeURIComponent(`Field sales activity — ${range.label}`)}&body=${encodeURIComponent(body)}`;}
 
 window.addEventListener('online',()=>{render();syncCloudNow(false);});window.addEventListener('offline',render);
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=isSamsungInternet?null:event;if(screen==='home'||modal?.includes('data-modal="settings"'))render();});
@@ -568,7 +807,7 @@ if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.se
 render();
 initializeCloud({
   getData:()=>data,
-  setData:remote=>{data={...data,...remote};persistLocal();screen=data.activeVisit?'visit':'home';modal=null;render();toast('Cloud data is ready on this device.');},
+  setData:remote=>{data=normalizeWorkspace({...data,...remote},realProducts);persistLocal();screen=data.activeVisit?'visit':'home';modal=null;render();toast('Cloud data is ready on this device.');},
   onIdentityChange:user=>activateWorkspace(user),
   onStatus:next=>{cloudState=next;if(screen==='home'||modal?.includes('data-modal="settings"'))render();}
 });
