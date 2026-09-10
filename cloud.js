@@ -1,3 +1,4 @@
+import { fingerprint, syncDecision, mergeRecords } from './sync-safety.js';
 import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
@@ -12,13 +13,14 @@ const client = configured
 let session = null;
 let getLocalData = () => null;
 let setLocalData = () => {};
+let checkpoint = () => {};
+let cloudLoaded = false;
 let onIdentityChange = async () => {};
 let onStatus = () => {};
 let syncTimer = null;
 let syncing = false;
 let lastSynced = null;
 let lastError = '';
-let lastHashes = {};
 let handledUserId = null;
 let activeUserId;
 let identityGeneration = 0;
@@ -31,7 +33,6 @@ function assertCurrentIdentity(userId, generation) {
   if (!identityReady || activeUserId !== userId || identityGeneration !== generation) throw new StaleIdentityError();
 }
 
-const hash = value => JSON.stringify(value);
 const numberOrNull = value => value == null ? null : Number(value);
 
 function status() {
@@ -87,6 +88,7 @@ function visitRow(item, userId) {
     latitude: numberOrNull(item.lat),
     longitude: numberOrNull(item.lng),
     summary: item.summary || '',
+    raw_note: item.rawNote ?? null,
     products: item.products || [],
     outcome: item.outcome || '',
     next_action: item.nextAction || '',
@@ -207,39 +209,68 @@ function rowsFor(data, userId) {
   };
 }
 
+const mappers = {
+  customers: row=>customerRow(fromCustomer(row), row.user_id),
+  products: row=>productRow(fromProduct(row), row.user_id),
+  visits: row=>visitRow(fromVisit(row), row.user_id),
+  tasks: row=>taskRow(fromTask(row), row.user_id),
+  customer_wines: row=>customerWineRow(fromCustomerWine(row), row.user_id),
+  travel_trips: row=>tripRow(fromTrip(row), row.user_id),
+  profiles: ({user_id,display_name,initials,territory,rate_per_km})=>({user_id,display_name,initials,territory,rate_per_km:Number(rate_per_km)}),
+  app_state: ({user_id,active_visit,active_trip,last_position,chat})=>({user_id,active_visit,active_trip,last_position,chat})
+};
+async function readRows(table,userId){
+  const rows=[];
+  for(let offset=0;;offset+=500){
+    const {data,error}=await client.from(table).select('*').eq('user_id',userId).order(table==='profiles'||table==='app_state'?'user_id':'id').range(offset,offset+499);
+    if(error)throw error;
+    rows.push(...data);
+    if(data.length<500)return {data:rows};
+  }
+}
 async function syncRows(table, rows, userId, force = false, generation = identityGeneration) {
-  const nextHash = hash(rows);
-  if (!force && lastHashes[table] === nextHash) return;
-  assertCurrentIdentity(userId, generation);
-
-  const { data: existing, error: readError } = await client
-    .from(table)
-    .select('id')
-    .eq('user_id', userId);
-  if (readError) throw readError;
-  assertCurrentIdentity(userId, generation);
-
-  const nextIds = new Set(rows.map(row => row.id));
-  const removedIds = (existing || []).map(row => row.id).filter(id => !nextIds.has(id));
-  if (removedIds.length) {
-    const { error } = await client.from(table).delete().eq('user_id', userId).in('id', removedIds);
-    if (error) throw error;
-    assertCurrentIdentity(userId, generation);
+  assertCurrentIdentity(userId,generation);
+  const existing=(await readRows(table,userId)).data;
+  assertCurrentIdentity(userId,generation);
+  const key=table==='profiles'||table==='app_state'?'user_id':'id';
+  const remote=new Map(existing.map(row=>[row[key],{row:mappers[table](row),version:row.updated_at}]));
+  const metadata=getLocalData()._syncBase ||= {};
+  const baseline=metadata[table] ||= {};
+  const local=new Map(rows.map(row=>[row[key],row]));
+  if([...remote.keys()].some(id=>!local.has(id)&&!baseline[id]))throw new Error('New cloud records are available. Tap Sync now to load them safely.');
+  for(const id of new Set([...local.keys(),...Object.keys(baseline)])){
+    const row=local.get(id),other=remote.get(id),base=baseline[id];
+    const decision=syncDecision(row,other,base);
+    if(decision==='conflict')throw new Error('Sync paused: '+table+' has a different cloud copy. Your device changes are kept. Download a backup before reviewing differences.');
+    if(decision==='ack'){baseline[id]={fingerprint:fingerprint(row),version:other.version};continue;}
+    if(decision==='none'){delete baseline[id];continue;}
+    if(decision==='remote')throw new Error('New cloud changes are available. Tap Sync now to merge them safely.');
+    // Never cascade a stale parent deletion into another device's new child records.
+    if(decision==='delete'&&['customers','products'].includes(table))throw new Error('Cloud deletion paused to protect linked history. Restore this client/product from backup or archive it instead.');
+    let request=client.from(table);
+    if(decision==='insert')request=request.insert(row);
+    else {
+      request=decision==='delete'?request.delete():request.update(row);
+      request=request.eq(key,id).eq('user_id',userId).eq('updated_at',base.version);
+    }
+    const result=await request.select('*');
+    if(result.error)throw result.error;
+    assertCurrentIdentity(userId,generation);
+    if(result.data?.length!==1)throw new Error('A cloud record changed during sync. Your local changes are kept; sync again to review.');
+    if(decision==='delete')delete baseline[id];
+    else baseline[id]={fingerprint:fingerprint(row),version:result.data[0].updated_at};
+    checkpoint();
   }
-  if (rows.length) {
-    const { error } = await client.from(table).upsert(rows, { onConflict: 'user_id,id' });
-    if (error) throw error;
-    assertCurrentIdentity(userId, generation);
-  }
-  lastHashes[table] = nextHash;
+  checkpoint();
 }
 
 export async function syncCloudNow(force = false) {
-  const data = getLocalData();
+  const data = JSON.parse(JSON.stringify(getLocalData()));
   const userId = session?.user?.id;
   const generation = identityGeneration;
   if (!configured || !identityReady || !userId || !data || syncing || !navigator.onLine) return false;
 
+  if(!cloudLoaded){await loadRemoteOrSeed();return cloudLoaded&&!lastError?syncCloudNow():false;}
   syncing = true;
   notify({ error: '' });
   try {
@@ -251,23 +282,12 @@ export async function syncCloudNow(force = false) {
       territory: data.profile?.territory || '',
       rate_per_km: Number(data.travel?.ratePerKm) || 4.9
     };
-    const profileHash = hash(profile);
-    if (force || lastHashes.profiles !== profileHash) {
-      const { error } = await client.from('profiles').upsert(profile, { onConflict: 'user_id' });
-      if (error) throw error;
-      assertCurrentIdentity(userId, generation);
-      lastHashes.profiles = profileHash;
-    }
+    await syncRows('profiles',[profile],userId,force,generation);
 
     const tables = rowsFor(data, userId);
     await syncRows('customers', tables.customers, userId, force, generation);
     await syncRows('products', tables.products, userId, force, generation);
-    await Promise.all([
-      syncRows('visits', tables.visits, userId, force, generation),
-      syncRows('tasks', tables.tasks, userId, force, generation),
-      syncRows('customer_wines', tables.customer_wines, userId, force, generation),
-      syncRows('travel_trips', tables.travel_trips, userId, force, generation)
-    ]);
+    for(const table of ['visits','tasks','customer_wines','travel_trips'])await syncRows(table,tables[table],userId,force,generation);
     assertCurrentIdentity(userId, generation);
 
     const appState = {
@@ -277,15 +297,11 @@ export async function syncCloudNow(force = false) {
       last_position: data.travel?.lastPosition || null,
       chat: data.chat || []
     };
-    const appStateHash = hash(appState);
-    if (force || lastHashes.app_state !== appStateHash) {
-      const { error } = await client.from('app_state').upsert(appState, { onConflict: 'user_id' });
-      if (error) throw error;
-      assertCurrentIdentity(userId, generation);
-      lastHashes.app_state = appStateHash;
-    }
+    await syncRows('app_state',[appState],userId,force,generation);
 
     lastSynced = new Date().toISOString();
+    const latest={...getLocalData(),_syncBase:null},snapshot={...data,_syncBase:null};
+    if(fingerprint(latest)!==fingerprint(snapshot))scheduleCloudSync();
     return true;
   } catch (error) {
     if (error instanceof StaleIdentityError) return false;
@@ -308,7 +324,7 @@ function fromCustomer(row) {
 }
 
 function fromVisit(row) {
-  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source, wineOutcomes:row.wine_outcomes||[], contactSnapshot:row.contact_snapshot||{}, feedbackOutcome:row.feedback_outcome||row.outcome, currentWineIds:row.current_wine_ids||[], samplesLeftWineIds:row.samples_left_wine_ids||[], followUpRequired:Boolean(row.follow_up_required), followUpReason:row.follow_up_reason||'', followUpContact:row.follow_up_contact||'', followUpTaskId:row.follow_up_task_id||null, followUpCompleted:Boolean(row.follow_up_completed), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60 };
+  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, rawNote:row.raw_note, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source, wineOutcomes:row.wine_outcomes||[], contactSnapshot:row.contact_snapshot||{}, feedbackOutcome:row.feedback_outcome||row.outcome, currentWineIds:row.current_wine_ids||[], samplesLeftWineIds:row.samples_left_wine_ids||[], followUpRequired:Boolean(row.follow_up_required), followUpReason:row.follow_up_reason||'', followUpContact:row.follow_up_contact||'', followUpTaskId:row.follow_up_task_id||null, followUpCompleted:Boolean(row.follow_up_completed), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60 };
 }
 
 function fromTask(row) {
@@ -338,18 +354,19 @@ async function loadRemoteOrSeed() {
     if (profileResult.error) throw profileResult.error;
     assertCurrentIdentity(userId, generation);
     if (!profileResult.data) {
+      cloudLoaded = true;
       syncing = false;
       await syncCloudNow(true);
       return;
     }
 
     const [customers, visits, tasks, products, customerWines, trips, appState] = await Promise.all([
-      client.from('customers').select('*').eq('user_id', userId).order('name'),
-      client.from('visits').select('*').eq('user_id', userId).order('started_at'),
-      client.from('tasks').select('*').eq('user_id', userId).order('due_at'),
-      client.from('products').select('*').eq('user_id', userId).order('name'),
-      client.from('customer_wines').select('*').eq('user_id', userId).order('updated_at'),
-      client.from('travel_trips').select('*').eq('user_id', userId).order('started_at'),
+      readRows('customers', userId),
+      readRows('visits', userId),
+      readRows('tasks', userId),
+      readRows('products', userId),
+      readRows('customer_wines', userId),
+      readRows('travel_trips', userId),
       client.from('app_state').select('*').eq('user_id', userId).maybeSingle()
     ]);
     const failed = [customers, visits, tasks, products, customerWines, trips, appState].find(result => result.error);
@@ -375,19 +392,43 @@ async function loadRemoteOrSeed() {
       chat: appState.data?.chat?.length ? appState.data.chat : current.chat
     };
     assertCurrentIdentity(userId, generation);
+    const metadata=JSON.parse(JSON.stringify(current._syncBase||{}));
+    const configs=[
+      ['customers','customers',customers,fromCustomer,customerRow],
+      ['visits','visits',visits,fromVisit,visitRow],
+      ['tasks','tasks',tasks,fromTask,taskRow],
+      ['products','products',products,fromProduct,productRow],
+      ['customer_wines','customerWines',customerWines,fromCustomerWine,customerWineRow],
+      ['travel_trips','trips',trips,fromTrip,tripRow]
+    ];
+    for(const [table,field,result,from,to] of configs){
+      const local=field==='trips'?current.travel.trips:current[field]||[];
+      const merged=mergeRecords(local,result.data.map(row=>({item:from(row),version:row.updated_at})),metadata[table],item=>to(item,userId));
+      if(field==='trips')remote.travel.trips=merged.items;else remote[field]=merged.items;
+      metadata[table]=merged.baselines;
+    }
+    // Merge singleton records with the same conflict rules as visits.
+    const localProfile={user_id:userId,display_name:current.profile.name,initials:current.profile.initials,territory:current.profile.territory,rate_per_km:current.travel.ratePerKm};
+    const localState={user_id:userId,active_visit:current.activeVisit||null,active_trip:current.travel.activeTrip||null,last_position:current.travel.lastPosition||null,chat:current.chat||[]};
+    for(const [table,localRow,raw] of [['profiles',localProfile,profileResult.data],['app_state',localState,appState.data]]){
+      const base=metadata[table]?.[userId];
+      const other=raw&&{row:mappers[table](raw),version:raw.updated_at};
+      let decision=syncDecision(localRow,other,base);
+      // A clean first-use profile/draft can safely adopt the server copy.
+      if(!base&&!current.customers.length&&!current.visits.length&&!current.activeVisit&&!current.travel.activeTrip)decision='remote';
+      if(['remote','ack'].includes(decision)&&raw){
+        metadata[table]={[userId]:{fingerprint:fingerprint(other.row),version:raw.updated_at}};
+      }else if(table==='profiles'){
+        remote.profile=current.profile;remote.travel.ratePerKm=current.travel.ratePerKm;
+      }else {
+        remote.activeVisit=current.activeVisit;remote.travel.activeTrip=current.travel.activeTrip;remote.travel.lastPosition=current.travel.lastPosition;remote.chat=current.chat;
+      }
+    }
+    remote._syncBase=metadata;
     setLocalData(remote);
-    const normalized = rowsFor(remote, userId);
-    lastHashes = {
-      profiles: hash({ user_id:userId, display_name:remote.profile.name, initials:remote.profile.initials, territory:remote.profile.territory, rate_per_km:remote.travel.ratePerKm }),
-      customers: hash(normalized.customers),
-      visits: hash(normalized.visits),
-      tasks: hash(normalized.tasks),
-      products: hash(normalized.products),
-      customer_wines: hash(normalized.customer_wines),
-      travel_trips: hash(normalized.travel_trips),
-      app_state: hash({ user_id:userId, active_visit:remote.activeVisit, active_trip:remote.travel.activeTrip, last_position:remote.travel.lastPosition, chat:remote.chat })
-    };
-    lastSynced = new Date().toISOString();
+    cloudLoaded=true;
+
+
   } catch (error) {
     if (error instanceof StaleIdentityError) return;
     lastError = error?.message || 'Could not load cloud data';
@@ -402,10 +443,11 @@ async function handleSession(nextSession) {
   session = nextSession;
   if (activeUserId !== nextUserId) {
     identityReady = false;
+    cloudLoaded = false;
     clearTimeout(syncTimer);
     syncTimer = null;
     handledUserId = null;
-    lastHashes = {};
+    pendingDifferences.clear();
     lastSynced = null;
     activeUserId = nextUserId;
     identityGeneration += 1;
@@ -419,6 +461,7 @@ async function handleSession(nextSession) {
   if (handledUserId === session.user.id) return;
   handledUserId = session.user.id;
   await loadRemoteOrSeed();
+  if(cloudLoaded&&!lastError)scheduleCloudSync();
 }
 
 function queueSessionChange(nextSession) {
@@ -431,6 +474,7 @@ function queueSessionChange(nextSession) {
 export async function initializeCloud(options) {
   getLocalData = options.getData;
   setLocalData = options.setData;
+  checkpoint = options.checkpoint || (()=>{});
   onIdentityChange = options.onIdentityChange || onIdentityChange;
   onStatus = options.onStatus;
   notify();
@@ -458,4 +502,78 @@ export async function signOutCloud() {
   const { error } = await client.auth.signOut();
   if (error) throw error;
   await queueSessionChange(null);
+}
+
+
+export async function refreshCloud(){
+  if(syncing||!navigator.onLine)return false;
+  await loadRemoteOrSeed();
+  if(lastError)return false;
+  return syncCloudNow();
+}
+const recordConfigs={
+  customers:['customers',fromCustomer,customerRow], visits:['visits',fromVisit,visitRow],
+  tasks:['tasks',fromTask,taskRow], products:['products',fromProduct,productRow],
+  customer_wines:['customerWines',fromCustomerWine,customerWineRow],
+  travel_trips:['trips',fromTrip,tripRow]
+};
+const pendingDifferences=new Map();
+function allLocalRows(workspace,userId){
+  return {...rowsFor(workspace,userId),
+    profiles:[{user_id:userId,display_name:workspace.profile.name,initials:workspace.profile.initials,territory:workspace.profile.territory,rate_per_km:workspace.travel.ratePerKm}],
+    app_state:[{user_id:userId,active_visit:workspace.activeVisit||null,active_trip:workspace.travel.activeTrip||null,last_position:workspace.travel.lastPosition||null,chat:workspace.chat||[]}]
+  };
+}
+export async function reviewCloudDifferences(){
+  const userId=session?.user?.id,generation=identityGeneration;
+  if(!userId||syncing)throw new Error('Wait for sync to finish, then try again.');
+  const results=[];pendingDifferences.clear();
+  for(const table of Object.keys(mappers)){
+    const raw=(await readRows(table,userId)).data;
+    assertCurrentIdentity(userId,generation);
+    const key=recordConfigs[table]?'id':'user_id';
+    const local=new Map(allLocalRows(getLocalData(),userId)[table].map(row=>[row[key],row]));
+    const remote=new Map(raw.map(row=>[row[key],row]));
+    const baselines=getLocalData()._syncBase?.[table]||{};
+    for(const id of new Set([...local.keys(),...Object.keys(baselines)])){
+      const here=local.get(id),there=remote.get(id);
+      const other=there&&{row:mappers[table](there),version:there.updated_at};
+      if(syncDecision(here,other,baselines[id])!=='conflict')continue;
+      const token=table+':'+id;
+      pendingDifferences.set(token,{table,id,here,there,userId,generation});
+      results.push({token,title:(here?.name||here?.title||here?.summary||table.replaceAll('_',' ')),local:here||null,cloud:other?.row||null});
+    }
+  }
+  return results;
+}
+export async function resolveCloudDifference(token,choice){
+  const item=pendingDifferences.get(token);
+  if(!item)throw new Error('Review the differences again before choosing.');
+  const {table,id,here,there,userId,generation}=item;
+  assertCurrentIdentity(userId,generation);
+  const key=recordConfigs[table]?'id':'user_id';
+  const latest=allLocalRows(getLocalData(),userId)[table].find(row=>row[key]===id);
+  if(fingerprint(latest)!==fingerprint(here))throw new Error('This device record changed. Review again.');
+  const raw=(await readRows(table,userId)).data.find(row=>row[key]===id);
+  assertCurrentIdentity(userId,generation);
+  if(raw?.updated_at!==there?.updated_at)throw new Error('The cloud copy changed. Review again.');
+  const current=JSON.parse(JSON.stringify(getLocalData()));
+  const bases=current._syncBase ||= {};bases[table] ||= {};
+  if(raw)bases[table][id]={fingerprint:fingerprint(mappers[table](raw)),version:raw.updated_at};
+  else delete bases[table][id];
+  if(choice==='cloud'){
+    if(recordConfigs[table]){
+      const [field,from]=recordConfigs[table],owner=field==='trips'?current.travel:current;
+      if(!raw&&['customers','products'].includes(table))throw new Error('Keep the device copy of this parent record to preserve linked history.');
+      owner[field]=owner[field].filter(row=>row.id!==id);
+      if(raw)owner[field].push(from(raw));
+    }else if(table==='profiles'&&raw){
+      current.profile={name:raw.display_name,initials:raw.initials,territory:raw.territory};current.travel.ratePerKm=Number(raw.rate_per_km);
+    }else if(table==='app_state'){
+      current.activeVisit=raw?.active_visit||null;current.travel.activeTrip=raw?.active_trip||null;current.travel.lastPosition=raw?.last_position||null;current.chat=raw?.chat||[];
+    }
+  }else if(choice!=='device')throw new Error('Choose a device or cloud copy.');
+  setLocalData(current);
+  pendingDifferences.delete(token);
+  notify({error:''});
 }

@@ -60,7 +60,9 @@ The app saves to the browser immediately and works without an account. Guest dat
 
 The PWA uses the device’s native browser location permission. Keep the app open while recording a trip because browsers can pause foreground GPS when the screen is locked. The commercial native Android stage uses a foreground location service for reliable, visible background mileage capture.
 
-Before production use, add record-level conflict resolution, server-side AI, consent/audit controls, and production Google/Microsoft integrations. Supabase Auth, the Postgres database, ownership policies and additive relationship/travel schema are now in place.
+Version 11 retains full visit notes, appends voice input, supports note/outcome corrections, and uses version-checked row writes with manual device/cloud conflict review. Update every device to v11 before resuming work. Bulk cloud reset is deliberately disabled to prevent cascading loss of linked history.
+
+Before production use, add server-side AI, consent/audit controls, and production Google/Microsoft integrations. Supabase Auth, the Postgres database, ownership policies and additive relationship/travel schema are now in place.
 
 ## Files
 
@@ -73,3 +75,6 @@ Before production use, add record-level conflict resolution, server-side AI, con
 - `public/manifest.json` and `public/sw.js` — PWA installation and offline cache
 - `package.json` — pinned app dependencies and development/build scripts
 - `PRODUCT-NOTES.md` — assumptions, data model, workflows and evolution path
+
+
+Full notes are limited to 4,000 characters; older summaries cannot reconstruct notes that were already discarded. Browser storage can still be removed by device cleanup, so keep exported backups. Physical-phone microphone and signed-in two-device testing remain release acceptance checks.

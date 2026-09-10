@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-10 — v11: safer notes and incremental sync
+
+- Preserve full completed-visit notes separately from summaries; include full notes in search and backups.
+- Append voice capture by default, with stop and undo; guard late callbacks after navigation or account changes.
+- Edit completed notes, feedback and next action without recreating wine relationships or tasks.
+- Visible storage-failure warning, retry and recovery download; failed visit completion keeps the active draft. Warn on another browser tab changing the same workspace.
+- Replace full-collection delete/upsert with baseline-aware, version-checked record changes. Preserve offline edits and unknown remote records, paginate reads, and review competing device/cloud copies explicitly.
+- Disable bulk cloud reset and cascading parent deletion; these require a separately designed safe reset workflow. Guest reset exports a backup first.
+- Improve narrow-screen wine controls; collapse the repeat-visit menu/listing-cycle fields and retain contact defaults.
+- Add nullable visits.raw_note (4,000 characters) and an app_state update-version trigger. No existing records deleted or rewritten. Add per-account _syncBase metadata in local exports/storage.
+- Tests: 21 automated tests; mobile 412px visit/wine/reminder regression; voice append/undo, quota failure/retry/export, full-note persistence and visit editing; production build; dependency audit (0 vulnerabilities). Cloud client tests use an isolated mock, not the owner's account. Database column/constraint/trigger verified remotely.
+- Remaining: genuine microphone accuracy and signed-in two-device acceptance need physical testing. Older notes already discarded cannot be reconstructed. Refresh all devices to v11; old clients still use their previous sync code. Browser storage remains removable; export backups. Auth advisor still flags disabled leaked-password protection.
+- Later stages remain separate: unknown/recurring buying windows, refined period reports, sample quantities, additional contacts and push notifications.
+
 ## 2026-09-10 — Visit detail and buying-window reminders
 
 ### Audit findings

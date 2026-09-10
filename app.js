@@ -1,5 +1,5 @@
 import { realProducts } from './products-data.js';
-import { initializeCloud, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
+import { initializeCloud, refreshCloud, reviewCloudDifferences, resolveCloudDifference, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
 import {
   FEEDBACK_OUTCOMES,
   LISTING_REMINDER_DAYS,
@@ -95,8 +95,34 @@ let deferredInstallPrompt = null;
 let appInstalled = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 const isSamsungInternet = /SamsungBrowser/i.test(navigator.userAgent);
 
-const persistLocal = () => writeWorkspace(localStorage, activeWorkspaceKey, data);
-const save = () => { persistLocal(); scheduleCloudSync(); };
+let localSaveFailed = false;
+let cloudDirty = false;
+let tabConflict = false;
+let voiceSession = null;
+let voiceUndo = null;
+const persistLocal = () => {
+  try {
+    if(tabConflict)throw new Error('Another tab changed this workspace.');
+    writeWorkspace(localStorage, activeWorkspaceKey, data);
+    localSaveFailed = false;
+    document.getElementById('save-warning')?.remove();
+  } catch (error) {
+    localSaveFailed = true;
+    showSaveWarning();
+    throw error;
+  }
+};
+function showSaveWarning() {
+  if(document.getElementById('save-warning'))return;
+  const warning=document.createElement('div');
+  warning.id='save-warning';warning.setAttribute('role','alert');
+  warning.innerHTML='Changes are NOT saved on this device. Keep this page open. <button data-action="retry-save">Retry save</button> <button data-action="export-backup">Download recovery backup</button>';
+  document.body.append(warning);
+}
+window.addEventListener('storage',event=>{if(event.key===activeWorkspaceKey){tabConflict=true;localSaveFailed=true;showSaveWarning();document.getElementById('save-warning').prepend('Another tab changed this workspace. Download recovery, then reload this tab. ');}});
+window.addEventListener('beforeunload',event=>{if(localSaveFailed){event.preventDefault();event.returnValue='';}});
+window.addEventListener('unhandledrejection',()=>{if(localSaveFailed)showSaveWarning();});
+const save = () => { persistLocal(); cloudDirty=true; scheduleCloudSync(); };
 async function activateWorkspace(user) {
   const transition = () => activateWorkspaceUnlocked(user);
   if (navigator.locks?.request) return navigator.locks.request('fieldflow-workspace-transition', transition);
@@ -176,7 +202,7 @@ const reimbursement = km => km * data.travel.ratePerKm;
 const todayTrips = () => data.travel.trips.filter(trip => new Date(trip.start).toDateString() === currentDate().toDateString());
 const currentTripKm = () => data.travel.activeTrip ? routeDistanceKm(data.travel.activeTrip.points || []) : 0;
 const distanceLabel = km => Number.isFinite(km) ? (km < 1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`) : 'Location not pinned';
-const storageLabel = () => !navigator.onLine ? 'Working offline' : cloudState.signedIn ? (cloudState.syncing ? 'Syncing…' : 'Cloud backed up') : 'Saved on device';
+const storageLabel = () => localSaveFailed?'Not saved':!navigator.onLine?'Working offline':cloudState.error?'Sync needs attention':cloudState.syncing?'Syncing…':cloudState.signedIn&&cloudState.lastSynced&&!cloudDirty?'Cloud backed up':'Saved on device';
 const dateInput = value => {
   if (!value) return '';
   const parsed = new Date(value);
@@ -306,7 +332,7 @@ function customersView() {
 
 function activityView() {
   const mode = filter === 'tasks' ? 'tasks' : filter === 'cycles' ? 'cycles' : 'visits';
-  const visits = [...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start)).filter(v => `${customer(v.customerId)?.name} ${v.summary} ${(v.products||[]).join(' ')}`.toLowerCase().includes(query.toLowerCase()));
+  const visits = [...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start)).filter(v => `${customer(v.customerId)?.name} ${v.summary} ${v.rawNote||''} ${(v.products||[]).join(' ')}`.toLowerCase().includes(query.toLowerCase()));
   const buckets = taskBuckets(data.tasks);
   const taskSection = (title, items, tone='') => items.length ? `<div class="section-row compact"><h2>${title}</h2><span class="status ${tone}">${items.length}</span></div><div class="list">${items.map(taskCard).join('')}</div>` : '';
   const cycleItems=cycleReminders();
@@ -413,9 +439,9 @@ function visitView() {
     <div class="section-row"><h2>Wines presented / discussed</h2><button class="text-btn" data-action="add-visit-wine">${icon('plus')} Add wine</button></div><div class="list">${selected.map(item=>{const product=wine(item.wineId);return `<div class="card visit-wine-row"><div class="list-card-main"><strong>${esc(product?.name||'Wine')}</strong><span>${esc(product?.brand||'')}</span></div><select class="field compact-field" data-visit-wine-outcome="${item.wineId}" aria-label="Outcome for ${esc(product?.name||'wine')}">${VISIT_WINE_OUTCOMES.map(outcome=>`<option ${item.outcome===outcome?'selected':''}>${outcome}</option>`).join('')}</select><label class="sample-check"><input type="checkbox" data-visit-wine-sample="${item.wineId}" ${item.sampleLeft?'checked':''}><span>Sample left</span></label><button class="close-btn" data-action="remove-visit-wine" data-id="${item.wineId}" aria-label="Remove wine">${icon('x')}</button></div>`}).join('')||`<button class="card add-wine-empty" data-action="add-visit-wine">${icon('plus')} Select wines from the master list</button>`}</div>
     ${(interested.length||samples.length)?`<div class="visit-wine-summary">${interested.length?`<span><strong>Interested in</strong>${esc(interested.join(', '))}</span>`:''}${samples.length?`<span><strong>Samples left</strong>${esc(samples.join(', '))}</span>`:''}</div>`:''}
     <div class="section-row"><h2>Feedback & outcome</h2><span class="status">Required</span></div><section class="card form-card"><div class="form-group"><label>Feedback / outcome</label><select class="field" data-visit-field="feedbackOutcome">${FEEDBACK_OUTCOMES.map(outcome=>`<option ${active.feedbackOutcome===outcome?'selected':''}>${outcome}</option>`).join('')}</select></div><div class="form-group"><label>Next action</label><input class="field" data-visit-field="nextAction" maxlength="1000" value="${esc(active.nextAction||'')}" placeholder="Example: Send updated pricing"></div></section>
-    <div class="section-row"><h2>Visit note</h2><span class="status">Saved offline</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap and speak naturally, or type below</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer sampled the Chardonnay and is considering a listing. Follow up Friday…">${esc(active.note||'')}</textarea>${active.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section>
+    <div class="section-row"><h2>Visit note</h2><span class="status">${localSaveFailed?'Not saved':'Saved on device'}</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap to add speech to your note. Tap again to stop.</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer sampled the Chardonnay and is considering a listing. Follow up Friday…">${esc(active.note||'')}</textarea>${voiceUndo?.id===active.id?'<button class="text-btn" data-action="voice-undo">Undo last voice addition</button>':''}${active.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section>
     <div class="section-row"><h2>1. Follow-up reminder</h2></div><section class="card form-card"><div class="form-group"><label>Follow-up required?</label><select class="field" data-visit-field="followUpRequired"><option value="false" ${!active.followUpRequired?'selected':''}>No</option><option value="true" ${active.followUpRequired?'selected':''}>Yes</option></select></div>${active.followUpRequired?`<div class="form-grid"><div class="form-group"><label>Follow-up date *</label><input class="field" type="date" data-visit-field="followUpAt" value="${dateInput(active.followUpAt)}"></div><div class="form-group"><label>Person to contact</label><input class="field" data-visit-field="followUpContact" maxlength="120" value="${esc(active.followUpContact||contact.person||'')}"></div></div><div class="form-group"><label>Reason for follow-up *</label><input class="field" data-visit-field="followUpReason" maxlength="1000" value="${esc(active.followUpReason||'')}" placeholder="Example: Confirm tasting feedback"></div>`:''}</section>
-    <div class="section-row"><h2>2. Menu / listing cycle</h2></div><section class="card form-card"><p class="modal-hint">Record this even when they are not doing listings now. FieldFlow will nudge you before the opportunity reopens.</p><div class="form-grid"><div class="form-group"><label>Menu / wine-list change date</label><input class="field" type="date" data-visit-field="menuChangeDate" value="${dateInput(active.menuChangeDate)}"></div><div class="form-group"><label>Or known month</label><input class="field" type="month" data-visit-field="menuChangeMonth" value="${esc(active.menuChangeMonth||'')}"></div></div><div class="form-grid"><div class="form-group"><label>Listings reopen date</label><input class="field" type="date" data-visit-field="listingsReopenAt" value="${dateInput(active.listingsReopenAt)}"></div><div class="form-group"><label>Or reopen month</label><input class="field" type="month" data-visit-field="listingsReopenMonth" value="${esc(active.listingsReopenMonth||'')}"></div></div><div class="form-group"><label>Remind me beforehand</label><select class="field" data-visit-field="listingReminderDays">${LISTING_REMINDER_DAYS.map(days=>`<option value="${days}" ${Number(active.listingReminderDays||60)===days?'selected':''}>${days} days</option>`).join('')}</select></div></section>
+    <details class="card visit-cycle-details"><summary>2. Menu / listing cycle — review or change</summary><section class="form-card"><p class="modal-hint">Record this even when they are not doing listings now. FieldFlow will nudge you before the opportunity reopens.</p><div class="form-grid"><div class="form-group"><label>Menu / wine-list change date</label><input class="field" type="date" data-visit-field="menuChangeDate" value="${dateInput(active.menuChangeDate)}"></div><div class="form-group"><label>Or known month</label><input class="field" type="month" data-visit-field="menuChangeMonth" value="${esc(active.menuChangeMonth||'')}"></div></div><div class="form-grid"><div class="form-group"><label>Listings reopen date</label><input class="field" type="date" data-visit-field="listingsReopenAt" value="${dateInput(active.listingsReopenAt)}"></div><div class="form-group"><label>Or reopen month</label><input class="field" type="month" data-visit-field="listingsReopenMonth" value="${esc(active.listingsReopenMonth||'')}"></div></div><div class="form-group"><label>Remind me beforehand</label><select class="field" data-visit-field="listingReminderDays">${LISTING_REMINDER_DAYS.map(days=>`<option value="${days}" ${Number(active.listingReminderDays||60)===days?'selected':''}>${days} days</option>`).join('')}</select></div></section></details>
     <button class="btn btn-primary btn-block sticky-save" style="margin-top:14px" data-action="end-visit">${icon('check')} End visit & save</button>
   </main>${nav()}`;
 }
@@ -509,7 +535,7 @@ function visitDetail(id) {
     <div class="section-row"><h2>Wine activity</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>Current listings</span><strong>${esc(current.join(', ')||'None recorded')}</strong></div><div class="info-line"><span>Interested in</span><strong>${esc(interested.join(', ')||'None recorded')}</strong></div><div class="info-line"><span>Samples left</span><strong>${esc(samples.join(', ')||'None recorded')}</strong></div></div><div class="list">${(visit.wineOutcomes||[]).map(item=>`<div class="card list-card"><div class="dot-icon">${icon('box')}</div><div class="list-card-main"><h3>${esc(wine(item.wineId)?.name||'Wine')}</h3><p>${esc(item.outcome)}${item.sampleLeft?' · Sample left':''}</p></div></div>`).join('')||emptyState('box','No wines selected','Older visits may only have note-based product names.')}</div>
     <div class="section-row"><h2>Follow-up reminder</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>Required</span><strong>${visit.followUpRequired?'Yes':'No'}</strong></div>${visit.followUpRequired?`<div class="info-line"><span>Date</span><strong>${dayLabel(followTask?.due||visit.followUp)}</strong></div><div class="info-line"><span>Reason</span><strong>${esc(followTask?.reason||visit.followUpReason||'—')}</strong></div><div class="info-line"><span>Person</span><strong>${esc(followTask?.contactPerson||visit.followUpContact||'—')}</strong></div><div class="info-line"><span>Completed</span><strong>${followTask?.done||visit.followUpCompleted?'Yes':'No'}</strong></div>${followTask?`<button class="btn btn-secondary btn-block btn-small" data-action="edit-task" data-id="${followTask.id}">Reschedule or edit</button>`:''}`:''}</div>
     <div class="section-row"><h2>Menu / listing cycle</h2></div><div class="card info-card">${cycleValue?`<div class="info-line" style="border:0;padding-top:0"><span>Next window</span><strong>${shortDate(cycleValue)}</strong></div><div class="info-line"><span>Reminder</span><strong>${visit.listingReminderDays||60} days before</strong></div>`:`<p class="muted-copy">No listing-cycle date recorded during this visit.</p>`}</div>
-    <button class="btn btn-ghost btn-block destructive-link" style="margin-top:14px" data-action="delete-visit" data-id="${visit.id}">Delete this visit</button></section></div>`;
+    <details class="card visit-details"><summary>Full original note</summary><p class="full-note">${esc(visit.rawNote??visit.summary??'No note recorded.')}</p>${visit.rawNote==null?'<p class="modal-hint">This older visit only retained its summary.</p>':''}</details><button class="btn btn-secondary btn-block" data-action="edit-visit" data-id="${visit.id}">Edit notes & outcome</button><button class="btn btn-ghost btn-block destructive-link" style="margin-top:14px" data-action="delete-visit" data-id="${visit.id}">Delete this visit</button></section></div>`;
   render();
 }
 
@@ -565,15 +591,19 @@ function customerFormModal(customerId = null) {
   render();
 }
 
+async function cloudDifferencesModal(){
+  const differences=await reviewCloudDifferences();
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal"><div class="modal-head"><h2>Review sync differences</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><p class="modal-hint">Neither copy has been discarded. Choose one record at a time. A backup downloads before each choice; when finished, use Sync now.</p>${differences.map(item=>`<section class="card info-card"><h3>${esc(item.title)}</h3><details><summary>Compare record details</summary><h4>This device</h4><pre class="full-note">${esc(JSON.stringify(item.local,null,2))}</pre><h4>Cloud</h4><pre class="full-note">${esc(JSON.stringify(item.cloud,null,2))}</pre></details><div class="form-grid"><button class="btn btn-secondary" data-action="cloud-choose" data-token="${esc(item.token)}" data-choice="device">Keep device copy</button><button class="btn btn-secondary" data-action="cloud-choose" data-token="${esc(item.token)}" data-choice="cloud">Use cloud copy</button></div></section>`).join('')||'<p>No competing edits found. Sync now to load new cloud records, or check the sync error in Profile & backup.</p>'}<button class="btn btn-primary btn-block" data-action="cloud-sync">Sync now</button></section></div>`;render();
+}
 function settingsModal() {
   const syncText = cloudState.error ? `Needs attention: ${cloudState.error}` : cloudState.syncing ? 'Syncing now…' : cloudState.lastSynced ? `Last synced ${time(cloudState.lastSynced)}` : 'Ready to sync';
   const installPanel = appInstalled ? `<div class="location-state">${icon('check')}<span>FieldFlow is installed on this device.</span></div>` : `<div class="card info-card"><h3>Install on this phone</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">${isSamsungInternet?'For this Samsung, install through Chrome to avoid the outdated package warning.':'Add FieldFlow to your Apps screen for full-screen access and safer offline use.'}</p><button class="btn btn-primary btn-block" data-action="install-app">${icon('download')} ${isSamsungInternet?'Open safely in Chrome':deferredInstallPrompt?'Install FieldFlow':'Show installation steps'}</button></div>`;
   const cloudPanel = !cloudState.configured
     ? `<div class="card info-card"><h3>Cloud backup</h3><p style="margin:0;color:var(--muted);font-size:13px;line-height:1.5">Cloud connection is not configured on this device. Local capture still works.</p></div>`
     : cloudState.signedIn
-      ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div></div>`
+      ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div>${cloudState.error?`<button class="btn btn-secondary btn-block" data-action="cloud-review">Review sync differences</button>`:''}<div></div></div>`
       : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Pilot access is invitation-only. Sign in with the account created for you to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="Your password"></div><button class="btn btn-primary btn-block" type="submit">Sign in</button>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
-  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>Always on</strong></div><div class="info-line"><span>KM rate</span><strong>${currency(data.travel.ratePerKm)}/km</strong></div></div>${cloudPanel}<div class="card info-card"><h3>Device backup</h3><p class="muted-copy">Download a complete copy before changing phones or clearing browser data.</p><div class="form-grid"><button class="btn btn-secondary" data-action="export-backup">${icon('download')} Export</button><button class="btn btn-ghost" data-action="import-backup">Import</button></div><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block destructive-link" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
+  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>${localSaveFailed?'Needs attention':'Available on this device'}</strong></div><div class="info-line"><span>KM rate</span><strong>${currency(data.travel.ratePerKm)}/km</strong></div></div>${cloudPanel}<div class="card info-card"><h3>Device backup</h3><p class="muted-copy">Download a complete copy before changing phones or clearing browser data.</p><div class="form-grid"><button class="btn btn-secondary" data-action="export-backup">${icon('download')} Export</button><button class="btn btn-ghost" data-action="import-backup">Import</button></div><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block destructive-link" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
 }
 
 function installHelpModal() {
@@ -589,10 +619,13 @@ function installHelpModal() {
 function emptyState(ic,title,text){return `<div class="card empty"><div class="dot-icon">${icon(ic)}</div><h3>${esc(title)}</h3><p>${esc(text)}</p></div>`;}
 
 function render() {
+  stopVoiceCapture();
+  const cycleOpen=document.querySelector('.visit-cycle-details')?.open;
   clearInterval(timerId);
   clearInterval(travelTimerId);
   const views={home:homeView,customers:customersView,activity:activityView,travel:travelView,products:productsView,reports:reportsView,assistant:assistantView,visit:visitView};
   document.getElementById('app').innerHTML=(views[screen]||homeView)()+(modal||'');
+  if(cycleOpen&&document.querySelector('.visit-cycle-details'))document.querySelector('.visit-cycle-details').open=true;
   if (data.activeVisit) timerId=setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>el.textContent=duration(data.activeVisit.start)),1000);
   if (data.travel.activeTrip) {
     travelTimerId=setInterval(()=>document.querySelectorAll('[data-travel-timer]').forEach(el=>el.textContent=duration(data.travel.activeTrip.start)),1000);
@@ -761,15 +794,18 @@ document.addEventListener('click', async event => {
   else if(action==='set-wine-status'){const relation=customerWine(target.dataset.id);if(!relation)return;upsertCustomerWine(data,{customerId:relation.customerId,wineId:relation.wineId,status:target.dataset.status,allocation:relation.allocation,notes:relation.notes,followUpAt:relation.followUpAt});save();customerDetail(relation.customerId);toast(target.dataset.status==='Listed'?'Confirmed listing saved':'Delisting saved; history retained');}
   else if(action==='wine-follow-up'){const relation=customerWine(target.dataset.id);taskModal(null,{customerId:relation.customerId,wineId:relation.wineId,title:`Follow up on ${wine(relation.wineId)?.name||'wine'}`,due:relation.followUpAt||iso(1,9)});}
   else if(action==='delete-visit'){const visit=data.visits.find(item=>item.id===target.dataset.id);if(!visit||!confirm('Delete this visit record? Wine status history will be retained.'))return;data.visits=data.visits.filter(item=>item.id!==visit.id);data.tasks.forEach(task=>{if(task.visitId===visit.id)task.visitId=null;});const c=customer(visit.customerId);const latest=data.visits.filter(item=>item.customerId===visit.customerId).sort((a,b)=>new Date(b.start)-new Date(a.start))[0];if(c)c.lastVisit=latest?.start||null;save();modal=null;render();toast('Visit deleted');}
+  else if(action==='retry-save'){try{save();render();toast('Saved on this device');}catch{showSaveWarning();}}
+  else if(action==='voice-undo'){stopVoiceCapture();if(voiceUndo?.id===data.activeVisit?.id){data.activeVisit.note=voiceUndo.note;voiceUndo=null;save();render();}}
+  else if(action==='edit-visit')editVisitModal(target.dataset.id);
   else if(action==='voice')startVoiceCapture();
   else if(action==='structure-note'){const box=document.getElementById('visit-note');data.activeVisit.note=box.value;const structured=structureNote(box.value);for(const name of structured.products){const product=data.products.find(item=>item.name===name);if(product&&!data.activeVisit.wineOutcomes.some(item=>item.wineId===product.id))data.activeVisit.wineOutcomes.push({wineId:product.id,outcome:'Discussed',sampleLeft:false});}if(!data.activeVisit.nextAction)data.activeVisit.nextAction=structured.nextAction||'';if(data.activeVisit.feedbackOutcome==='General relationship visit')data.activeVisit.feedbackOutcome=structured.feedbackOutcome;if(structured.followUp&&!data.activeVisit.followUpRequired){data.activeVisit.followUpRequired=true;data.activeVisit.followUpAt=dateInput(structured.followUp);data.activeVisit.followUpReason=structured.nextAction||'Follow up after visit';}save();render();toast('Note structured — check the suggested fields');}
   else if(action==='end-visit'){
-    const note=document.getElementById('visit-note')?.value||data.activeVisit.note||''; const s=structureNote(note); const active=data.activeVisit; const c=customer(active.customerId);
-    const isClosed=active.feedbackOutcome==='Not doing listings now / No current listing opportunity';if(isClosed&&!active.listingsReopenAt&&!active.listingsReopenMonth&&!active.menuChangeDate&&!active.menuChangeMonth){toast('Add when listings reopen, or the menu-change date/month.');return;}if(active.followUpRequired&&(!active.followUpAt||!active.followUpReason)){toast('Add the follow-up date and reason, or choose No.');return;}
-    const selected=[...(active.wineOutcomes||[])];for(const name of s.products){const product=data.products.find(item=>item.name===name);if(product&&!selected.some(item=>item.wineId===product.id))selected.push({wineId:product.id,outcome:'Discussed',sampleLeft:false});}const followUpAt=active.followUpRequired?dateTimeAtNine(active.followUpAt):null;const visit={id:active.id,customerId:active.customerId,start:active.start,end:new Date().toISOString(),lat:active.lat,lng:active.lng,summary:s.summary,products:selected.map(item=>wine(item.wineId)?.name).filter(Boolean),wineOutcomes:selected,outcome:s.outcome,feedbackOutcome:active.feedbackOutcome||s.feedbackOutcome,nextAction:active.nextAction||s.nextAction||'',followUp:followUpAt,followUpRequired:Boolean(active.followUpRequired),followUpReason:active.followUpReason||'',followUpContact:active.followUpContact||'',followUpCompleted:false,followUpTaskId:null,currentWineIds:active.currentWineIds||[],samplesLeftWineIds:selected.filter(item=>item.sampleLeft).map(item=>item.wineId),contactSnapshot:{...(active.contactSnapshot||{})},menuChangeDate:active.menuChangeDate||null,menuChangeMonth:active.menuChangeMonth||'',listingsReopenAt:dateTimeAtNine(active.listingsReopenAt),listingsReopenMonth:active.listingsReopenMonth||'',listingReminderDays:Number(active.listingReminderDays)||60,source:active.source||'typed'};applyVisitWineOutcomes(data,visit,followUpAt||iso(1,9));
+    stopVoiceCapture(); const before=clone(data); const note=document.getElementById('visit-note')?.value??data.activeVisit.note??''; const s=structureNote(note); const active=data.activeVisit; const c=customer(active.customerId);
+    const isClosed=active.feedbackOutcome==='Not doing listings now / No current listing opportunity';if(isClosed&&!active.listingsReopenAt&&!active.listingsReopenMonth&&!active.menuChangeDate&&!active.menuChangeMonth){const cycle=document.querySelector('.visit-cycle-details');if(cycle){cycle.open=true;cycle.scrollIntoView({block:'center'});}toast('Add when listings reopen, or the menu-change date/month.');return;}if(active.followUpRequired&&(!active.followUpAt||!active.followUpReason)){toast('Add the follow-up date and reason, or choose No.');return;}
+    const selected=[...(active.wineOutcomes||[])];for(const name of s.products){const product=data.products.find(item=>item.name===name);if(product&&!selected.some(item=>item.wineId===product.id))selected.push({wineId:product.id,outcome:'Discussed',sampleLeft:false});}const followUpAt=active.followUpRequired?dateTimeAtNine(active.followUpAt):null;const visit={id:active.id,customerId:active.customerId,start:active.start,end:new Date().toISOString(),lat:active.lat,lng:active.lng,rawNote:note,summary:s.summary,products:selected.map(item=>wine(item.wineId)?.name).filter(Boolean),wineOutcomes:selected,outcome:s.outcome,feedbackOutcome:active.feedbackOutcome||s.feedbackOutcome,nextAction:active.nextAction||s.nextAction||'',followUp:followUpAt,followUpRequired:Boolean(active.followUpRequired),followUpReason:active.followUpReason||'',followUpContact:active.followUpContact||'',followUpCompleted:false,followUpTaskId:null,currentWineIds:active.currentWineIds||[],samplesLeftWineIds:selected.filter(item=>item.sampleLeft).map(item=>item.wineId),contactSnapshot:{...(active.contactSnapshot||{})},menuChangeDate:active.menuChangeDate||null,menuChangeMonth:active.menuChangeMonth||'',listingsReopenAt:dateTimeAtNine(active.listingsReopenAt),listingsReopenMonth:active.listingsReopenMonth||'',listingReminderDays:Number(active.listingReminderDays)||60,source:active.source||'typed'};applyVisitWineOutcomes(data,visit,followUpAt||iso(1,9));
     c.lastVisit=active.start;const snapshot=visit.contactSnapshot;if(snapshot.placeName)c.name=snapshot.placeName;if(snapshot.person)c.contact=snapshot.person;if(snapshot.role)c.role=snapshot.role;if(snapshot.address)c.address=snapshot.address;if(snapshot.phone)c.phone=snapshot.phone;if(snapshot.email)c.email=snapshot.email;c.menuChangeDate=visit.menuChangeDate;c.menuChangeMonth=visit.menuChangeMonth;c.listingsReopenAt=visit.listingsReopenAt;c.listingsReopenMonth=visit.listingsReopenMonth;c.listingReminderDays=visit.listingReminderDays;
     let tasksAdded=0;if(active.followUpRequired){const task=createFollowUp({customerId:c.id,visitId:visit.id,title:visit.nextAction||`Follow up after ${visit.feedbackOutcome}`,due:followUpAt,reason:active.followUpReason,contactPerson:active.followUpContact||snapshot.person||c.contact||''});visit.followUpTaskId=task.id;tasksAdded++;}for(const item of selected.filter(item=>item.outcome==='Follow-up required')){createFollowUp({customerId:c.id,wineId:item.wineId,visitId:visit.id,title:`Follow up on ${wine(item.wineId)?.name||'wine'}`,due:followUpAt||iso(1,9),reason:active.followUpReason||'Wine follow-up',contactPerson:active.followUpContact||snapshot.person||c.contact||''});tasksAdded++;}data.visits.push(visit);
-    data.activeVisit=null;save();screen='home';render();toast(tasksAdded?'Visit saved and follow-up added':'Visit saved');
+    data.activeVisit=null;try{save();}catch{data=before;showSaveWarning();return;}screen='home';render();toast(tasksAdded?'Visit saved and follow-up added':'Visit saved');
   }
   else if(action==='ask')ask(target.dataset.value);
   else if(action==='email-pricelist')emailPriceList();
@@ -779,7 +815,13 @@ document.addEventListener('click', async event => {
   else if(action==='share-report')emailReport();
   else if(action==='export-backup')exportBackup();
   else if(action==='import-backup')document.getElementById('backup-file')?.click();
-  else if(action==='cloud-sync'){target.disabled=true;await syncCloudNow(true);settingsModal();toast(cloudState.error?'Sync needs attention':'Cloud backup is up to date');}
+  else if(action==='cloud-sync'){target.disabled=true;const synced=await refreshCloud();settingsModal();toast(synced?'Cloud backup is up to date':'Sync needs attention — check your connection and status');}
+  else if(action==='cloud-review'){try{await cloudDifferencesModal();}catch(error){toast(error.message);}}
+  else if(action==='cloud-choose'){
+    if(!confirm('Use this copy of the record? A recovery backup will download first.'))return;
+    exportBackup('-before-sync-choice');
+    try{await resolveCloudDifference(target.dataset.token,target.dataset.choice);await cloudDifferencesModal();toast('Choice saved on this device. Tap Sync now when finished.');}catch(error){toast(error.message);}
+  }
   else if(action==='cloud-signout'){target.disabled=true;try{await signOutCloud();modal=null;render();toast('Signed out. Account data is locked on this device.');}catch(error){toast(error.message);}}
   else if(action==='install-app'){
     if(isSamsungInternet||!deferredInstallPrompt){installHelpModal();return;}
@@ -796,13 +838,13 @@ document.addEventListener('click', async event => {
     const fallback=encodeURIComponent(secureUrl);
     window.location.href=`intent://ernest01982.github.io/onconapp/#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${fallback};end`;
   }
-  else if(action==='clear-crm-data'){if(!confirm('Clear all customers, visits, wine relationships, follow-ups and mileage? Export a backup first. This also clears cloud backup and cannot be undone.'))return;const profile=clone(data.profile);const products=clone(data.products?.length?data.products:realProducts);data=normalizeWorkspace(clone(seed),products);data.profile=profile;data.products=products;save();modal=null;screen='home';render();toast('CRM activity cleared. Your real price list remains.');}
+  else if(action==='clear-crm-data'){if(cloudState.signedIn){toast('Bulk cloud deletion is disabled to protect linked history. Export your backup before arranging a full account reset.');return;}if(!confirm('Clear this guest workspace? A recovery backup will download first. Your signed-in account is not affected.'))return;exportBackup('before-clear');const profile=clone(data.profile);const products=clone(data.products?.length?data.products:realProducts);data=normalizeWorkspace(clone(seed),products);data.profile=profile;data.products=products;save();modal=null;screen='home';render();toast('CRM activity cleared. Your real price list remains.');}
 });
 
 document.addEventListener('input', event => {
   if(event.target.id==='search'){query=event.target.value; const pos=event.target.selectionStart;render();const input=document.getElementById('search');input?.focus();input?.setSelectionRange(pos,pos);}
   if(event.target.id==='wine-picker-search'){modalQuery=event.target.value;const pos=event.target.selectionStart;winePickerModal(pickerContext?.mode||'visit',pickerContext?.customerId||null);const input=document.getElementById('wine-picker-search');input?.focus();input?.setSelectionRange(pos,pos);}
-  if(event.target.id==='visit-note'&&data.activeVisit){data.activeVisit.note=event.target.value;save();}
+  if(event.target.id==='visit-note'&&data.activeVisit){stopVoiceCapture();data.activeVisit.note=event.target.value;try{save();}catch{showSaveWarning();}}
   if(event.target.matches('[data-visit-field]')&&data.activeVisit){const field=event.target.dataset.visitField;const contactFields={contactPlaceName:'placeName',contactPerson:'person',contactRole:'role',contactAddress:'address',contactPhone:'phone',contactEmail:'email'};if(contactFields[field]){data.activeVisit.contactSnapshot||={};data.activeVisit.contactSnapshot[contactFields[field]]=event.target.value;}else if(field==='listingReminderDays')data.activeVisit[field]=Number(event.target.value);else if(field!=='followUpRequired')data.activeVisit[field]=event.target.value;save();}
 });
 
@@ -828,6 +870,14 @@ document.addEventListener('keydown', event => {
 
 document.addEventListener('submit', async event => {
   event.preventDefault();
+  if(event.target.id==='edit-visit-form'){
+    const visit=data.visits.find(item=>item.id===event.target.dataset.id);if(!visit)return;
+    const before=clone(visit),fd=new FormData(event.target);
+    visit.rawNote=String(fd.get('rawNote')||'');visit.summary=structureNote(visit.rawNote).summary;
+    visit.feedbackOutcome=String(fd.get('feedbackOutcome'));visit.nextAction=String(fd.get('nextAction')||'');
+    try{save();}catch{Object.assign(visit,before);return;}
+    visitDetail(visit.id);toast('Visit corrections saved');
+  }
   if(event.target.id==='ask-form'){const input=document.getElementById('ask-input');ask(input.value);}
   if(event.target.id==='auth-form'){
     const fd=new FormData(event.target);const email=String(fd.get('email')||'').trim();const password=String(fd.get('password')||'');
@@ -859,13 +909,45 @@ document.addEventListener('submit', async event => {
   }
 });
 
+function stopVoiceCapture(){
+  const current=voiceSession;
+  if(!current)return;
+  voiceSession=null;
+  current.recognition.abort();
+  document.getElementById('voice-button')?.classList.remove('listening');
+  const help=document.getElementById('voice-help');
+  if(help)help.textContent='Stopped. Your note is kept. Tap to add more.';
+}
 function startVoiceCapture(){
-  const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition; const button=document.getElementById('voice-button'); const help=document.getElementById('voice-help');
-  if(!Recognition){help.textContent='Voice capture is not available in this browser. Type your note below.';document.getElementById('visit-note')?.focus();return;}
-  const recognition=new Recognition();recognition.lang='en-ZA';recognition.interimResults=true;button.classList.add('listening');help.textContent='Listening… tap stop on your keyboard if needed';
-  recognition.onresult=e=>{const transcript=Array.from(e.results).map(r=>r[0].transcript).join(' ');const limited=transcript.slice(0,4000);const box=document.getElementById('visit-note');box.value=limited;data.activeVisit.note=limited;save();if(transcript.length>limited.length)help.textContent='The note reached its 4,000-character safety limit.';};
-  recognition.onerror=()=>{help.textContent='I could not hear that. Try again or type your note.';};
-  recognition.onend=()=>{button.classList.remove('listening');help.textContent='Captured. Tap “Structure my note” to review it.';};recognition.start();
+  if(voiceSession){stopVoiceCapture();render();return;}
+  const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const help=document.getElementById('voice-help');
+  if(!Recognition){help.textContent='Use the microphone on your phone keyboard, or type below.';document.getElementById('visit-note')?.focus();return;}
+  const active=data.activeVisit;if(!active)return;
+  const base=active.note||'';
+  if(base.length>=4000){help.textContent='Note is full (4,000 characters). Edit it before adding more.';return;}
+  const recognition=new Recognition();
+  const current={recognition,id:active.id,workspace:activeWorkspaceKey,base};
+  voiceUndo={id:active.id,note:base};voiceSession=current;
+  recognition.lang='en-ZA';recognition.interimResults=true;
+  document.getElementById('voice-button')?.classList.add('listening');
+  help.textContent='Listening — tap the microphone again to stop.';
+  recognition.onresult=e=>{
+    if(voiceSession!==current||data.activeVisit?.id!==current.id||activeWorkspaceKey!==current.workspace)return;
+    const transcript=Array.from(e.results).map(r=>r[0].transcript).join(' ');
+    const combined=[base,transcript].filter(Boolean).join('\n');
+    data.activeVisit.note=combined.slice(0,4000);data.activeVisit.source='voice';
+    const box=document.getElementById('visit-note');if(box)box.value=data.activeVisit.note;
+    try{save();}catch{stopVoiceCapture();return;}
+    if(combined.length>4000){stopVoiceCapture();help.textContent='Note reached 4,000 characters. Extra speech was not captured; shorten the note before continuing.';}
+  };
+  recognition.onerror=()=>{if(voiceSession===current){stopVoiceCapture();help.textContent='Voice stopped. Your existing note is kept. Try again or use your keyboard.';}};
+  recognition.onend=()=>{if(voiceSession===current){voiceSession=null;render();}};
+  try{recognition.start();}catch{stopVoiceCapture();help.textContent='Could not start the microphone. Use the keyboard microphone or type.';}
+}
+function editVisitModal(id){
+  const visit=data.visits.find(item=>item.id===id);if(!visit)return;
+  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="edit-visit-form" data-id="${esc(id)}"><div class="modal-head"><h2>Edit visit notes</h2><button class="close-btn" type="button" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><p class="modal-hint">Correct this visit without creating another visit, changing listing history or duplicating reminders. Use the linked follow-up to reschedule.</p><div class="form-group"><label for="edit-raw-note">Full note</label><textarea class="field" id="edit-raw-note" name="rawNote" maxlength="4000">${esc(visit.rawNote??visit.summary??'')}</textarea></div><div class="form-group"><label for="edit-feedback">Feedback / outcome</label><select class="field" id="edit-feedback" name="feedbackOutcome">${FEEDBACK_OUTCOMES.map(value=>`<option ${value===visit.feedbackOutcome?'selected':''}>${esc(value)}</option>`).join('')}</select></div><div class="form-group"><label for="edit-next">Next action</label><input class="field" id="edit-next" name="nextAction" maxlength="1000" value="${esc(visit.nextAction||'')}"></div><button class="btn btn-primary btn-block sticky-save">Save corrections</button></form></div>`;render();
 }
 
 function selectedProducts(){return data.products.filter(p=>p.active&&(productFilter==='All'||p.brand===productFilter)&&(productRelationshipFilter==='All'||customersForWine(p.id).some(item=>productRelationshipFilter==='Listed'?item.status==='Listed':productRelationshipFilter==='Interested'?PIPELINE_STATUSES.includes(item.status):item.followUpAt&&new Date(item.followUpAt)<=new Date())));}
@@ -879,8 +961,9 @@ window.addEventListener('appinstalled',()=>{appInstalled=true;deferredInstallPro
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(registration=>registration.update()).catch(()=>{}));
 render();
 initializeCloud({
+  checkpoint:()=>persistLocal(),
   getData:()=>data,
   setData:remote=>{data=normalizeWorkspace({...data,...remote},realProducts);persistLocal();screen=data.activeVisit?'visit':'home';modal=null;render();toast('Cloud data is ready on this device.');},
   onIdentityChange:user=>activateWorkspace(user),
-  onStatus:next=>{cloudState=next;if(screen==='home'||modal?.includes('data-modal="settings"'))render();}
+  onStatus:next=>{if(next.lastSynced&&next.lastSynced!==cloudState.lastSynced&&!next.error)cloudDirty=false;cloudState=next;if(screen==='home'||modal?.includes('data-modal="settings"'))render();}
 });
