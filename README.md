@@ -32,9 +32,12 @@ The app starts with an empty CRM and the imported Niew Beverages On Con catalogu
 - Nearest-client detection and per-client location pinning from the device
 - Automatic distance and reimbursement totals at R4.90 per kilometre
 - Live visit timer and device-local capture
+- Complete visit records with place/contact details, feedback outcome, next action, wine interest and samples left
 - Voice input where browser speech recognition is available, with a typed fallback
 - Local note structuring into summary, products, outcome, next action and follow-up date
-- Follow-up creation, editing, deletion and overdue/today/upcoming views
+- Follow-up creation, reason/contact capture, completion, rescheduling history and overdue/today/upcoming views
+- Separate menu/listing-cycle reminders using an exact date or month and configurable 30/60/90-day notice
+- Priority buying-window cards on Today and Activity, plus integrated management-report metrics
 - Customer/contact records, opportunities and recent visit history
 - A single master-wine relationship per restaurant and wine, with Interested, Sampled, Considering, Listed, Delisted and Not Interested status history
 - Visit wine outcomes that update the restaurant's existing wine pipeline without creating duplicates
@@ -53,7 +56,7 @@ The app starts with an empty CRM and the imported Niew Beverages On Con catalogu
 
 ## Prototype boundaries
 
-The app saves to the browser immediately and works without an account. Guest data and each signed-in user's data are stored in separate device workspaces, and signing out locks the account workspace. When a user signs in, normalized customer, visit, task, product, restaurant-wine relationship and travel records sync to Supabase. Its “AI” note extraction and assistant are intentionally deterministic for now so the core workflow can be tested without an AI API key. The price-list and report buttons prepare an email through the device’s configured mail app; direct Microsoft 365 sending is an integration step described in [PRODUCT-NOTES.md](PRODUCT-NOTES.md).
+The app saves to the browser immediately and works without an account. Guest data and each signed-in user's data are stored in separate device workspaces, and signing out locks the account workspace. When a user signs in, normalized customer, visit, task, product, restaurant-wine relationship and travel records sync to Supabase. Listing-window reminders are calculated locally and appear when FieldFlow is opened; push notifications are a later Android/service integration. Its “AI” note extraction and assistant are intentionally deterministic for now so the core workflow can be tested without an AI API key. The price-list and report buttons prepare an email through the device’s configured mail app; direct Microsoft 365 sending is an integration step described in [PRODUCT-NOTES.md](PRODUCT-NOTES.md).
 
 The PWA uses the device’s native browser location permission. Keep the app open while recording a trip because browsers can pause foreground GPS when the screen is locked. The commercial native Android stage uses a foreground location service for reliable, visible background mileage capture.
 

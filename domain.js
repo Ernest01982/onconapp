@@ -10,6 +10,17 @@ export const WINE_STATUSES = [
 
 export const VISIT_WINE_OUTCOMES = [...WINE_STATUSES.filter(status => status !== 'Delisted'), 'Follow-up required'];
 export const PIPELINE_STATUSES = ['Interested', 'Sampled', 'Considering'];
+export const FEEDBACK_OUTCOMES = [
+  'General relationship visit',
+  'Positive — interested',
+  'Sampled — follow-up needed',
+  'Considering',
+  'Listed / placement confirmed',
+  'Order / trial agreed',
+  'Not doing listings now / No current listing opportunity',
+  'Not interested'
+];
+export const LISTING_REMINDER_DAYS = [30, 60, 90];
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const asNumberOrNull = value => value === '' || value == null || !Number.isFinite(Number(value)) ? null : Number(value);
@@ -17,6 +28,7 @@ const isoNow = () => new Date().toISOString();
 
 export function normalizeWorkspace(workspace, products = []) {
   const normalized = clone(workspace || {});
+  normalized.customers = Array.isArray(normalized.customers) ? normalized.customers : [];
   normalized.customerWines = Array.isArray(normalized.customerWines) ? normalized.customerWines : [];
   normalized.visits = Array.isArray(normalized.visits) ? normalized.visits : [];
   normalized.tasks = Array.isArray(normalized.tasks) ? normalized.tasks : [];
@@ -24,16 +36,49 @@ export function normalizeWorkspace(workspace, products = []) {
   normalized.travel.trips = Array.isArray(normalized.travel.trips) ? normalized.travel.trips : [];
   normalized.travel.ratePerKm = Number(normalized.travel.ratePerKm) || 4.9;
 
+  normalized.customers = normalized.customers.map(customer => ({
+    ...customer,
+    menuChangeDate: customer.menuChangeDate || null,
+    menuChangeMonth: /^\d{4}-\d{2}$/.test(customer.menuChangeMonth || '') ? customer.menuChangeMonth : '',
+    listingsReopenAt: customer.listingsReopenAt || null,
+    listingsReopenMonth: /^\d{4}-\d{2}$/.test(customer.listingsReopenMonth || '') ? customer.listingsReopenMonth : '',
+    listingReminderDays: LISTING_REMINDER_DAYS.includes(Number(customer.listingReminderDays)) ? Number(customer.listingReminderDays) : 60,
+    listingCycleNotes: customer.listingCycleNotes || ''
+  }));
+
   const productByName = new Map(products.map(item => [String(item.name || '').toLowerCase(), item.id]));
   normalized.visits = normalized.visits.map(visit => ({
     ...visit,
     products: Array.isArray(visit.products) ? visit.products : [],
+    contactSnapshot: visit.contactSnapshot && typeof visit.contactSnapshot === 'object' ? visit.contactSnapshot : {},
+    feedbackOutcome: visit.feedbackOutcome || visit.outcome || 'Visit completed',
+    currentWineIds: Array.isArray(visit.currentWineIds) ? visit.currentWineIds.filter(Boolean) : [],
+    samplesLeftWineIds: Array.isArray(visit.samplesLeftWineIds) ? visit.samplesLeftWineIds.filter(Boolean) : [],
+    followUpRequired: Boolean(visit.followUpRequired || visit.followUp),
+    followUpReason: visit.followUpReason || visit.nextAction || '',
+    followUpContact: visit.followUpContact || '',
+    followUpTaskId: visit.followUpTaskId || null,
+    followUpCompleted: Boolean(visit.followUpCompleted),
+    menuChangeDate: visit.menuChangeDate || null,
+    menuChangeMonth: /^\d{4}-\d{2}$/.test(visit.menuChangeMonth || '') ? visit.menuChangeMonth : '',
+    listingsReopenAt: visit.listingsReopenAt || null,
+    listingsReopenMonth: /^\d{4}-\d{2}$/.test(visit.listingsReopenMonth || '') ? visit.listingsReopenMonth : '',
+    listingReminderDays: LISTING_REMINDER_DAYS.includes(Number(visit.listingReminderDays)) ? Number(visit.listingReminderDays) : 60,
     wineOutcomes: Array.isArray(visit.wineOutcomes)
-      ? visit.wineOutcomes.filter(item => item?.wineId)
+      ? visit.wineOutcomes.filter(item => item?.wineId).map(item => ({ ...item, sampleLeft:Boolean(item.sampleLeft) }))
       : (visit.products || []).map(name => ({ wineId: productByName.get(String(name).toLowerCase()), outcome:'Discussed' })).filter(item => item.wineId)
   }));
 
-  normalized.tasks = normalized.tasks.map(task => ({ ...task, wineId:task.wineId || null, visitId:task.visitId || null, completedAt:task.completedAt || null }));
+  normalized.tasks = normalized.tasks.map(task => ({
+    ...task,
+    wineId:task.wineId || null,
+    visitId:task.visitId || null,
+    completedAt:task.completedAt || null,
+    reminderType:task.reminderType || 'followup',
+    reason:task.reason || task.title || '',
+    contactPerson:task.contactPerson || '',
+    rescheduleHistory:Array.isArray(task.rescheduleHistory) ? task.rescheduleHistory.slice(-50) : []
+  }));
   normalized.travel.trips = normalized.travel.trips.map(trip => {
     const startOdometer = asNumberOrNull(trip.startOdometer);
     const endOdometer = asNumberOrNull(trip.endOdometer);
@@ -51,8 +96,20 @@ export function normalizeWorkspace(workspace, products = []) {
 
   if (normalized.activeVisit) {
     normalized.activeVisit.wineOutcomes = Array.isArray(normalized.activeVisit.wineOutcomes)
-      ? normalized.activeVisit.wineOutcomes.filter(item => item?.wineId)
+      ? normalized.activeVisit.wineOutcomes.filter(item => item?.wineId).map(item => ({ ...item, sampleLeft:Boolean(item.sampleLeft) }))
       : [];
+    normalized.activeVisit.contactSnapshot = normalized.activeVisit.contactSnapshot && typeof normalized.activeVisit.contactSnapshot === 'object' ? normalized.activeVisit.contactSnapshot : {};
+    normalized.activeVisit.feedbackOutcome ||= 'General relationship visit';
+    normalized.activeVisit.currentWineIds = Array.isArray(normalized.activeVisit.currentWineIds) ? normalized.activeVisit.currentWineIds.filter(Boolean) : [];
+    normalized.activeVisit.followUpRequired = Boolean(normalized.activeVisit.followUpRequired);
+    normalized.activeVisit.followUpReason ||= '';
+    normalized.activeVisit.followUpContact ||= '';
+    normalized.activeVisit.nextAction ||= '';
+    normalized.activeVisit.menuChangeDate ||= null;
+    normalized.activeVisit.menuChangeMonth = /^\d{4}-\d{2}$/.test(normalized.activeVisit.menuChangeMonth || '') ? normalized.activeVisit.menuChangeMonth : '';
+    normalized.activeVisit.listingsReopenAt ||= null;
+    normalized.activeVisit.listingsReopenMonth = /^\d{4}-\d{2}$/.test(normalized.activeVisit.listingsReopenMonth || '') ? normalized.activeVisit.listingsReopenMonth : '';
+    normalized.activeVisit.listingReminderDays = LISTING_REMINDER_DAYS.includes(Number(normalized.activeVisit.listingReminderDays)) ? Number(normalized.activeVisit.listingReminderDays) : 60;
   }
 
   const relationships = new Map();
@@ -162,6 +219,30 @@ export function taskBuckets(tasks, reference = new Date()) {
     else buckets.upcoming.push(task);
   }
   return buckets;
+}
+
+export function listingCycleTarget(customer) {
+  const value = customer?.listingsReopenAt || (customer?.listingsReopenMonth ? `${customer.listingsReopenMonth}-01T09:00:00` : '') || customer?.menuChangeDate || (customer?.menuChangeMonth ? `${customer.menuChangeMonth}-01T09:00:00` : '');
+  if (!value) return null;
+  const target = new Date(value);
+  return Number.isNaN(target.getTime()) ? null : target;
+}
+
+export function listingCycleReminders(customers, reference = new Date()) {
+  const today = localDay(reference);
+  const reminders = [];
+  for (const customer of customers || []) {
+    const target = listingCycleTarget(customer);
+    if (!target) continue;
+    const targetDay = localDay(target);
+    const leadDays = LISTING_REMINDER_DAYS.includes(Number(customer.listingReminderDays)) ? Number(customer.listingReminderDays) : 60;
+    const remindAt = new Date(targetDay); remindAt.setDate(remindAt.getDate() - leadDays);
+    const windowEnds = new Date(targetDay); windowEnds.setDate(windowEnds.getDate() + 31);
+    if (today >= windowEnds) continue;
+    const state = today >= targetDay ? 'open' : today >= remindAt ? 'due' : 'upcoming';
+    reminders.push({ customerId:customer.id, targetAt:targetDay.toISOString(), remindAt:remindAt.toISOString(), leadDays, state });
+  }
+  return reminders.sort((a,b) => new Date(a.targetAt) - new Date(b.targetAt));
 }
 
 export function calculateTripDistance({ startOdometer, endOdometer, manualDistance, gpsDistance = 0 }) {

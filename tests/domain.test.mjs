@@ -4,6 +4,8 @@ import {
   applyVisitWineOutcomes,
   calculateTripDistance,
   dateRange,
+  listingCycleReminders,
+  listingCycleTarget,
   normalizeWorkspace,
   taskBuckets,
   upsertCustomerWine
@@ -18,6 +20,9 @@ test('legacy workspaces gain additive fields without losing records', () => {
   assert.deepEqual(normalized.visits[0].wineOutcomes, [{wineId:'w1',outcome:'Discussed'}]);
   assert.equal(normalized.travel.trips[0].customerId, 'c1');
   assert.deepEqual(normalized.customerWines, []);
+  assert.equal(normalized.customers[0].listingReminderDays, 60);
+  assert.equal(normalized.visits[0].followUpRequired, false);
+  assert.equal(normalized.tasks[0].reminderType, 'followup');
 });
 
 test('restaurant-wine updates never create duplicate relationships and retain history', () => {
@@ -70,4 +75,20 @@ test('report periods use a local inclusive start and exclusive end', () => {
   const range=dateRange('custom','2026-09-01','2026-09-03',new Date('2026-09-09T12:00:00'));
   assert.equal(range.start.getDate(),1);
   assert.equal(range.end.getDate(),4);
+});
+
+test('listing-cycle reminders stay separate and honour 30, 60 and 90 day notice', () => {
+  const customers = [
+    { id:'open', listingsReopenAt:'2026-09-01T09:00:00', listingReminderDays:30 },
+    { id:'due', menuChangeDate:'2026-10-20T09:00:00', listingReminderDays:60 },
+    { id:'later', listingsReopenMonth:'2027-01', menuChangeMonth:'2027-03', listingReminderDays:90 },
+    { id:'expired', listingsReopenAt:'2026-07-01T09:00:00', listingReminderDays:30 }
+  ];
+  const reminders = listingCycleReminders(customers, new Date('2026-09-10T12:00:00'));
+  assert.deepEqual(reminders.map(item => [item.customerId, item.state, item.leadDays]), [
+    ['open', 'open', 30],
+    ['due', 'due', 60],
+    ['later', 'upcoming', 90]
+  ]);
+  assert.equal(listingCycleTarget(customers[2]).getMonth(), 0);
 });

@@ -273,7 +273,7 @@ select.field { appearance: none; background: white; }
 .report-table th { color: var(--muted); font-weight: 780; background: #f6f8f6; }
 .report-table td:last-child, .report-table th:last-child { text-align: right; }
 .report-table tfoot td { font-weight: 850; border-bottom: 0; }
-.visit-wine-row { padding: 13px; display: grid; grid-template-columns: minmax(0,1fr) minmax(125px,.8fr) 44px; align-items: center; gap: 8px; }
+.visit-wine-row { padding: 13px; display: grid; grid-template-columns: minmax(0,1fr) minmax(125px,.8fr) auto 44px; align-items: center; gap: 8px; }
 .visit-wine-row strong, .visit-wine-row span { display: block; }
 .visit-wine-row span { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .compact-field { min-height: 44px; padding: 0 10px; border-radius: 13px; font-size: 12px; }
@@ -299,6 +299,26 @@ select.field { appearance: none; background: white; }
 .history div { display: flex; justify-content: space-between; gap: 12px; padding-top: 9px; font-size: 11px; }
 .history span { color: var(--muted); text-align: right; }
 .destructive-link { color: #9c2229; }
+.compact-card, .form-card { padding: 16px; }
+.visit-details { padding: 0; overflow: hidden; }
+.visit-details summary { min-height: 56px; padding: 17px; display: flex; align-items: center; justify-content: space-between; font-weight: 800; cursor: pointer; }
+.visit-details summary::after { content: '+'; font-size: 22px; color: var(--muted); }
+.visit-details[open] summary::after { content: '−'; }
+.details-body { padding: 14px 16px 4px; border-top: 1px solid var(--line); }
+.sample-check { min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 13px; background: #f7f9f7; display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
+.sample-check input { width: 18px; height: 18px; accent-color: var(--ink); }
+.sample-check span { margin: 0; color: var(--ink); font-weight: 750; }
+.visit-wine-summary { display: grid; gap: 7px; margin: 9px 2px 0; }
+.visit-wine-summary span { padding: 10px 12px; border-radius: 13px; background: var(--mint); color: var(--muted); font-size: 12px; line-height: 1.4; }
+.visit-wine-summary strong { display: block; margin-bottom: 2px; color: var(--ink); }
+.cycle-card { padding: 15px; display: flex; align-items: center; gap: 12px; }
+.cycle-card-main { flex: 1; min-width: 0; }
+.cycle-card h3 { margin: 8px 0 3px; font-size: 16px; }
+.cycle-card p, .cycle-card small { display: block; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.cycle-card small { margin-top: 6px; }
+.cycle-open, .cycle-due { color: #9c4d12; }
+.cycle-upcoming { color: var(--ink); }
+.cycle-summary .muted-copy { margin-top: 10px; }
 
 @media (min-width: 700px) {
   body { background: #e9eee9; }
@@ -313,6 +333,7 @@ select.field { appearance: none; background: white; }
   .install-card .btn { grid-column: 1 / -1; width: 100%; }
   .visit-wine-row { grid-template-columns: 1fr 44px; }
   .visit-wine-row .compact-field { grid-column: 1 / -1; grid-row: 2; }
+  .visit-wine-row .sample-check { grid-column: 1 / -1; grid-row: 3; }
 }
 
 @media print {

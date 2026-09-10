@@ -20,11 +20,11 @@ FieldFlow is a field rep’s daily companion rather than a traditional desk CRM.
 | Entity | Important fields | Relationships |
 |---|---|---|
 | User | id, name, territory, timezone, organisation_id | Owns visits and tasks; belongs to an organisation later |
-| Customer | id, name, type, address, latitude, longitude, opportunity_value, last_visit_at | Has contacts, visits and tasks |
+| Customer | id, name, type, address, latitude, longitude, opportunity_value, last_visit_at, menu/listing change date or month, listing reopen date or month, reminder lead | Has contacts, visits, tasks and one listing-cycle reminder source |
 | Contact | id, customer_id, name, role, phone, email | Belongs to a customer |
-| Visit | id, user_id, customer_id, started_at, ended_at, start/end coordinates, duration, summary, outcome, sync_status | Has note, products and actions |
+| Visit | id, user_id, customer_id, started_at, ended_at, coordinates, duration, contact snapshot, feedback outcome, next action, current listings, samples left, follow-up and listing-cycle snapshot | Has note, products and actions |
 | Visit note | id, visit_id, transcript, structured_json, source, confidence, reviewed_at | Belongs to a visit |
-| Task | id, customer_id, visit_id, owner_id, title, due_at, completed_at, priority | May be created from a visit |
+| Task | id, customer_id, visit_id, wine_id, title, reason, contact person, due_at, completed_at, reschedule history | A practical follow-up, separate from listing-cycle reminders |
 | Product | id, sku, name, category, pack, active | Appears on price lists and visits |
 | Restaurant wine | id, customer_id, wine_id, status, listing/delisting dates, allocation, notes, follow_up_at, history | One relationship per restaurant and master wine; only `Listed` is a confirmed placement |
 | Price-list item | price_list_id, product_id, unit/pack price, VAT, effective dates | Versioned for safe sharing |
@@ -74,6 +74,14 @@ Each restaurant and master wine share one durable relationship. Interest, sampli
 The relationship is available from both directions: a restaurant shows listed and pipeline wines, while a wine shows the restaurants where it is listed or under consideration. A visit can attach master wines with outcomes. Interested, Sampled, Considering and Listed outcomes update the same relationship; a later Discussed note never downgrades a stronger status. Wine follow-ups link the task to both the restaurant and wine.
 
 The customer detail screen includes **Save this location**, allowing a rep to stand at a venue and replace its saved coordinates with the device’s current position. For payroll-grade use, the backend should retain GPS accuracy, raw points, edits, rate policy/version and approval status.
+
+### Follow-ups and listing-cycle reminders
+
+A follow-up is an explicit task: whether it is required, when it is due, why, who to contact and whether it is complete. Rescheduling changes the due date while retaining a bounded history of previous dates. A wine-related follow-up identifies both the restaurant and master wine.
+
+A listing-cycle reminder is deliberately separate. It is derived from the venue’s next listings-reopen timing, or its menu/wine-list change timing when reopen information is unavailable. Exact dates take priority, but a year/month can be used when the buyer cannot provide a day. The rep selects a 30, 60 or 90-day lead. FieldFlow then labels the venue as scheduled, approaching or open and surfaces it on Today, Activity, Reports and in Assistant planning answers.
+
+When the visit outcome is **Not doing listings now / No current listing opportunity**, FieldFlow requires one of those future timing values before the visit can be saved. This keeps the account alive without pretending it is an active opportunity. In this PWA stage reminders are in-app; reliable Android push notifications are a later service/native enhancement.
 
 ### Price-list sharing
 
@@ -150,4 +158,4 @@ Microsoft documents MSAL for Android in its [MSAL Android overview](https://lear
 
 ## Validation completed
 
-The release was exercised in an isolated mobile Chromium browser at 412 × 915 pixels. The tested path covered creating a restaurant, starting two visits, selecting a master wine, moving it from Interested to Listed, proving a later Discussed outcome did not downgrade it, delisting with retained history, adding/editing/deleting a wine follow-up, entering and correcting an odometer trip, report filtering and refresh persistence. Two-way restaurant/wine views, listing rules, KM calculations and reimbursement at R4.90/km were asserted. No runtime errors or horizontal overflow were observed. Unit coverage also checks relationship deduplication/history, legacy-data normalization, outcome precedence, task buckets, date ranges and odometer validation.
+The original release was exercised in an isolated mobile Chromium browser at 412 × 915 pixels across restaurant, wine status/history, KM, reporting and persistence workflows. The reminder upgrade added a second full mobile run covering the no-current-opportunity outcome, a month-only listing window, wine interest, a sample left, complete contact snapshots, follow-up creation, rescheduling, completion, report totals and refresh persistence. No runtime errors or horizontal overflow were observed. Unit coverage checks relationship deduplication/history, legacy-data normalization, outcome precedence, separate reminder windows, task buckets, date ranges and odometer validation.

@@ -67,6 +67,12 @@ function customerRow(item, userId) {
     opportunity_value: Number(item.value) || 0,
     latitude: numberOrNull(item.lat),
     longitude: numberOrNull(item.lng),
+    menu_change_date: item.menuChangeDate || null,
+    menu_change_month: item.menuChangeMonth || '',
+    listings_reopen_at: item.listingsReopenAt || null,
+    listings_reopen_month: item.listingsReopenMonth || '',
+    listing_reminder_days: Number(item.listingReminderDays) || 60,
+    listing_cycle_notes: item.listingCycleNotes || '',
     ...(item.createdAt ? { created_at:item.createdAt } : {})
   };
 }
@@ -86,7 +92,21 @@ function visitRow(item, userId) {
     next_action: item.nextAction || '',
     follow_up_at: item.followUp || null,
     source: item.source || 'typed',
-    wine_outcomes: item.wineOutcomes || []
+    wine_outcomes: item.wineOutcomes || [],
+    contact_snapshot: item.contactSnapshot || {},
+    feedback_outcome: item.feedbackOutcome || item.outcome || '',
+    current_wine_ids: item.currentWineIds || [],
+    samples_left_wine_ids: item.samplesLeftWineIds || [],
+    follow_up_required: Boolean(item.followUpRequired),
+    follow_up_reason: item.followUpReason || '',
+    follow_up_contact: item.followUpContact || '',
+    follow_up_task_id: item.followUpTaskId || null,
+    follow_up_completed: Boolean(item.followUpCompleted),
+    menu_change_date: item.menuChangeDate || null,
+    menu_change_month: item.menuChangeMonth || '',
+    listings_reopen_at: item.listingsReopenAt || null,
+    listings_reopen_month: item.listingsReopenMonth || '',
+    listing_reminder_days: Number(item.listingReminderDays) || 60
   };
 }
 
@@ -101,7 +121,11 @@ function taskRow(item, userId) {
     completed_at: item.completedAt || null,
     priority: item.priority || 'Next',
     wine_id: item.wineId || null,
-    visit_id: item.visitId || null
+    visit_id: item.visitId || null,
+    reminder_type: item.reminderType || 'followup',
+    reason: item.reason || item.title || '',
+    contact_person: item.contactPerson || '',
+    reschedule_history: item.rescheduleHistory || []
   };
 }
 
@@ -280,15 +304,15 @@ export function scheduleCloudSync() {
 }
 
 function fromCustomer(row) {
-  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, phone:row.phone, lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), createdAt:row.created_at };
+  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, phone:row.phone, lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60, listingCycleNotes:row.listing_cycle_notes||'', createdAt:row.created_at };
 }
 
 function fromVisit(row) {
-  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source, wineOutcomes:row.wine_outcomes||[] };
+  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source, wineOutcomes:row.wine_outcomes||[], contactSnapshot:row.contact_snapshot||{}, feedbackOutcome:row.feedback_outcome||row.outcome, currentWineIds:row.current_wine_ids||[], samplesLeftWineIds:row.samples_left_wine_ids||[], followUpRequired:Boolean(row.follow_up_required), followUpReason:row.follow_up_reason||'', followUpContact:row.follow_up_contact||'', followUpTaskId:row.follow_up_task_id||null, followUpCompleted:Boolean(row.follow_up_completed), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60 };
 }
 
 function fromTask(row) {
-  return { id:row.id, customerId:row.customer_id, title:row.title, due:row.due_at, done:row.completed, completedAt:row.completed_at, priority:row.priority, wineId:row.wine_id, visitId:row.visit_id };
+  return { id:row.id, customerId:row.customer_id, title:row.title, due:row.due_at, done:row.completed, completedAt:row.completed_at, priority:row.priority, wineId:row.wine_id, visitId:row.visit_id, reminderType:row.reminder_type||'followup', reason:row.reason||row.title, contactPerson:row.contact_person||'', rescheduleHistory:row.reschedule_history||[] };
 }
 
 function fromCustomerWine(row) {

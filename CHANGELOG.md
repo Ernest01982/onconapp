@@ -1,5 +1,71 @@
 # Changelog
 
+## 2026-09-10 — Visit detail and buying-window reminders
+
+### Audit findings
+
+#### Working well
+
+- The existing customer, visit, wine relationship, travel, reporting and local-first PWA flows were preserved.
+- The master wine list remains the single product source; visit outcomes still update one restaurant-wine relationship without duplication.
+- Follow-ups already had usable overdue, today, upcoming and completed groupings.
+
+#### Needed repair
+
+- Visit records did not retain a complete historical contact/venue snapshot, samples left or a clear feedback category.
+- Follow-ups did not store their reason, person to contact or reschedule history.
+- Rapid actions could stack notifications over the bottom visit controls.
+
+#### Needed improvement
+
+- The visit screen needed structured fields without forcing repeated typing.
+- “No current listing opportunity” needed to preserve the account and require useful future timing.
+- Listing-cycle prompts needed to remain visibly separate from ordinary follow-up tasks.
+
+#### New functionality required
+
+- Menu/wine-list change and listing-reopen dates or month-only values.
+- Configurable 30, 60 or 90-day advance reminders and priority venue views.
+- Listing-window metrics in the management report and planning assistant.
+
+### Added
+
+- Complete visit capture for venue/contact details, feedback, next action, current listings, wines discussed, wine interest and samples left.
+- A dedicated “Not doing listings now / No current listing opportunity” outcome. Saving this outcome requires a future menu/listing window.
+- Separate follow-up reminder fields: required, date, reason, contact person, completed state and rescheduling history.
+- Separate menu/listing-cycle reminders with exact-date or month-only capture and 30/60/90-day notice.
+- Home, customer, Activity, Reports and Assistant visibility for open and approaching buying windows.
+- Historical visit snapshots so later customer edits do not rewrite what was recorded at the visit.
+
+### Fixed
+
+- Wine interest and sample summaries refresh immediately when an outcome changes.
+- Completing a follow-up from a customer keeps the customer view current.
+- Deleting a visit no longer leaves a dangling visit link on retained follow-up tasks.
+- Only the newest confirmation message is shown, preventing stacked notices from obscuring mobile save controls.
+
+### Data and schema changes
+
+- Additive customer fields store menu change timing, listing reopen timing, reminder lead and cycle notes.
+- Additive visit fields store the contact snapshot, feedback, listing/sample wine snapshots, follow-up details and cycle timing.
+- Additive task fields store reminder type, reason, contact person and bounded reschedule history.
+- Existing rows receive safe defaults. No customer, visit, wine, task or travel history is deleted or rewritten.
+- Existing Row Level Security and authenticated ownership policies remain active; new text, array and JSON payloads have database limits.
+
+### Tests completed
+
+- 14 automated domain, migration-compatibility, security and workspace tests passed.
+- Production build passed.
+- A complete 412 × 915 mobile workflow passed with no console errors or horizontal overflow.
+- The workflow covered month-only listing timing, the no-opportunity outcome, wine interest, sample left, follow-up creation, rescheduling, completion, reports and refresh persistence.
+- Both Supabase migrations applied successfully; added columns and constraints were verified with RLS still enabled.
+
+### Remaining known limitations
+
+- Browser reminders appear inside FieldFlow when the app is opened; Android push notifications require the later notification service/native stage.
+- AI structuring remains deterministic and should be reviewed by the rep before saving.
+- Supabase Auth still reports leaked-password protection as disabled; enable it before expanding access beyond the pilot.
+
 ## 2026-09-09 — Wine listings, travel records and reporting upgrade
 
 ### Audit findings
