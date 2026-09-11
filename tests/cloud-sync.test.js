@@ -43,6 +43,12 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   let status;
   await cloud.initializeCloud({getData:()=>workspace,setData:value=>{workspace={...workspace,...value};},onStatus:value=>{status=value;}});
   assert.equal(tables.profiles.length,1);
+  workspace.profile={name:'Updated Rep',initials:'UR',territory:'New Territory'};
+  workspace.travel.ratePerKm=5.25;
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
+  assert.equal(tables.profiles[0].display_name,'Updated Rep');
+  assert.equal(tables.profiles[0].territory,'New Territory');
+  assert.equal(tables.profiles[0].rate_per_km,5.25);
   workspace.customers.push({id:'account-1',name:'A',area:'Test',type:'Restaurant'});
   workspace.visits.push({id:'visit-1',customerId:'account-1',start:'2026-09-10T09:00:00Z',end:'2026-09-10T10:00:00Z',summary:'Short',rawNote:'First. Second. Important third commitment.'});
   assert.equal(await cloud.syncCloudNow(),true,status.error);

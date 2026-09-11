@@ -1,4 +1,4 @@
-const CACHE = 'fieldflow-v11';
+const CACHE = 'fieldflow-v12';
 const ASSETS = ['./', './index.html', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png', './icon-512-maskable.png'];
 
 async function cacheAppShell() {

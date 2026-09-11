@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-11 — v12: quick client entry and editable personal details
+
+- Start Visit always opens a searchable client picker, including for an empty account. Search matches name, area and contact, ignoring case and accents.
+- Add new client from the picker; Save client & start visit records the client and captures visit location immediately.
+- New-client draft fields and picker search are saved in the current device workspace. Back and reopening retain the draft; successful visit start clears it. Drafts are device-only, not shared between devices.
+- Profile & backup → Edit my details allows name, initials, sales territory and reimbursement rate changes. Rate validation accepts R0.01–R1,000 with two decimals.
+- New GPS trips snapshot the rate at start. Active trips (including older drafts) and historical trips retain their existing rates when settings change.
+- Existing profile sync is reused, with no database migration or record deletion. Background sync status no longer redraws open input forms.
+- Tests: mobile picker search, empty/no-result states, draft Back/reload recovery, direct client-to-visit capture, profile persistence, invalid rate, historical/active rate protection, and new 10 km trip at R5.25 = R52.50. Extended isolated cloud-client test covers profile and rate changes.
+- Limitation: genuine GPS accuracy, microphone behaviour and authenticated phone sync still depend on on-device testing. No demo data added.
+
 ## 2026-09-10 — v11: safer notes and incremental sync
 
 - Preserve full completed-visit notes separately from summaries; include full notes in search and backups.

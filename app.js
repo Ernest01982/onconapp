@@ -198,7 +198,7 @@ const geoDistanceKm = (from, to) => {
 const routeDistanceKm = points => points.slice(1).reduce((total, point, index) => total + geoDistanceKm(points[index], point), 0);
 const hasCustomerLocation = item => Number.isFinite(item?.lat) && Number.isFinite(item?.lng);
 const nearestCustomer = position => data.customers.filter(hasCustomerLocation).map(item => ({ customer:item, km:geoDistanceKm(position, {lat:item.lat,lng:item.lng}) })).sort((a,b)=>a.km-b.km)[0] || null;
-const reimbursement = km => km * data.travel.ratePerKm;
+const reimbursement = km => km * (data.travel.activeTrip?.ratePerKm??data.travel.ratePerKm);
 const todayTrips = () => data.travel.trips.filter(trip => new Date(trip.start).toDateString() === currentDate().toDateString());
 const currentTripKm = () => data.travel.activeTrip ? routeDistanceKm(data.travel.activeTrip.points || []) : 0;
 const distanceLabel = km => Number.isFinite(km) ? (km < 1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`) : 'Location not pinned';
@@ -282,7 +282,7 @@ function homeView() {
   return `${topbar(`Good ${now.getHours()<12?'morning':now.getHours()<18?'afternoon':'evening'}`, now.toLocaleDateString('en-ZA',{weekday:'long',day:'numeric',month:'long'}))}
   <main class="content">
     ${activeTrip ? `<section class="card driving-card"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Mileage tracking active</span></div><div class="travel-live"><div><strong data-trip-distance>${currentTripKm().toFixed(1)} km</strong><span>Distance</span></div><div><strong data-travel-timer>${duration(activeTrip.start)}</strong><span>Driving time</span></div></div><p>GPS points are saving on this device.</p><button class="btn btn-primary btn-block" data-screen="travel">Open mileage tracker</button></section>` : ''}
-    ${active ? `<section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Visit in progress</span></div><div class="timer" data-timer>${duration(active.start)}</div><h2 style="margin:0 0 5px">${esc(customer(active.customerId)?.name)}</h2><p>${esc(customer(active.customerId)?.area)} · location saved</p><button class="btn btn-primary btn-block" data-screen="visit">Open visit</button></section>` : `<section class="card hero"><p class="eyebrow">Your day, made simple</p><h2>${pending.length ? `${pending.length} follow-ups. One clear plan.` : hasCustomers ? 'You’re all caught up.' : 'Add your first client.'}</h2><p>${pending.length ? `Start with ${esc(customer(pending[0].customerId)?.name)}, then keep moving.` : hasCustomers ? 'Start a visit when you arrive at your next customer.' : 'Save the venue and contact once, then every visit becomes quicker.'}</p><div class="hero-actions"><button class="btn btn-primary" data-action="${hasCustomers?'start-visit':'add-customer'}">${icon('plus')} ${hasCustomers?'Start visit':'Add first client'}</button><button class="btn btn-white" data-screen="assistant">${icon('spark')} Ask AI</button></div></section>`}
+    ${active ? `<section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Visit in progress</span></div><div class="timer" data-timer>${duration(active.start)}</div><h2 style="margin:0 0 5px">${esc(customer(active.customerId)?.name)}</h2><p>${esc(customer(active.customerId)?.area)} · location saved</p><button class="btn btn-primary btn-block" data-screen="visit">Open visit</button></section>` : `<section class="card hero"><p class="eyebrow">Your day, made simple</p><h2>${pending.length ? `${pending.length} follow-ups. One clear plan.` : hasCustomers ? 'You’re all caught up.' : 'Add your first client.'}</h2><p>${pending.length ? `Start with ${esc(customer(pending[0].customerId)?.name)}, then keep moving.` : hasCustomers ? 'Start a visit when you arrive at your next customer.' : 'Save the venue and contact once, then every visit becomes quicker.'}</p><div class="hero-actions"><button class="btn btn-primary" data-action="start-visit">${icon('plus')} Start visit</button><button class="btn btn-white" data-screen="assistant">${icon('spark')} Ask AI</button></div></section>`}
     ${!appInstalled ? `<section class="card install-card"><div class="install-icon">${icon('download','icon-lg')}</div><div><strong>Put FieldFlow on your phone</strong><span>${isSamsungInternet?'Use Chrome for a Play Protect-safe installation.':'Install it like an app for quick access and offline capture.'}</span></div><button class="btn btn-secondary" data-action="install-app">${isSamsungInternet?'Use Chrome':deferredInstallPrompt?'Install':'Show me how'}</button></section>` : ''}
     <div class="section-row"><h2>Today at a glance</h2><span class="offline-pill ${navigator.onLine?'':'offline'}">${storageLabel()}</span></div>
     <div class="quick-grid">
@@ -539,14 +539,18 @@ function visitDetail(id) {
   render();
 }
 
+let clientFormFromVisit=false;
 function startVisitModal(prefill) {
-  if (data.activeVisit) { screen='visit'; modal=null; return render(); }
-  if (!data.customers.length) { customerFormModal(); toast('Add your first client before starting a visit.'); return; }
-  let selected=prefill||(data.travel.lastPosition?nearestCustomer(data.travel.lastPosition)?.customer.id:null)||data.customers[0]?.id;
-  const paint = (locationText='Location will be captured when you start') => {
-    modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Start a visit"><div class="handle"></div><div class="modal-head"><h2>Start visit</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><p style="color:var(--muted);margin:-7px 0 15px">Choose where you are. We’ll handle the rest.</p><div class="choice-list">${data.customers.map(c=>{const km=data.travel.lastPosition?geoDistanceKm(data.travel.lastPosition,{lat:c.lat,lng:c.lng}):null;return `<button class="choice ${selected===c.id?'selected':''}" data-action="select-visit-customer" data-id="${c.id}"><div class="dot-icon">${initials(c.name)}</div><div><strong>${esc(c.name)}</strong><span>${esc(c.area)} · ${km!=null?`${km<1?`${Math.round(km*1000)} m`:`${km.toFixed(1)} km`} away`:esc(c.contact)}</span></div></button>`}).join('')}</div><div class="location-state">${icon('pin')}<span>${esc(locationText)}</span></div><button class="btn btn-primary btn-block" data-action="confirm-start" data-id="${selected}">${icon('plus')} Start visit now</button></section></div>`; render();
-  };
-  paint();
+  if(data.activeVisit){screen='visit';modal=null;return render();}
+  clientFormFromVisit=false;
+  const draft=data.visitStartDraft ||= {query:'',selected:null,client:null};
+  if(prefill)draft.selected=prefill;
+  const clean=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const terms=clean(draft.query).trim().split(/\s+/).filter(Boolean);
+  const matches=data.customers.filter(c=>terms.every(term=>clean([c.name,c.area,c.contact].join(' ')).includes(term)));
+  const selected=matches.find(c=>c.id===draft.selected)?.id||matches[0]?.id||'';
+  draft.selected=selected;
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Start a visit"><div class="handle"></div><div class="modal-head"><h2>Start visit</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><label for="visit-client-search">Find a client</label><div class="search">${icon('search')}<input id="visit-client-search" value="${esc(draft.query)}" placeholder="Name, area or contact" autocomplete="off"></div><button class="btn btn-secondary btn-block" data-action="visit-add-client">${icon('plus')} ${draft.client?'Continue new client':'Add new client'}</button><div class="choice-list" style="margin-top:14px">${matches.map(c=>`<button class="choice ${selected===c.id?'selected':''}" data-action="select-visit-customer" data-id="${esc(c.id)}"><div class="dot-icon">${esc(initials(c.name))}</div><div><strong>${esc(c.name)}</strong><span>${esc(c.area)} · ${esc(c.contact||'No contact added')}</span></div></button>`).join('')||'<p class="modal-hint">No clients found. Add a new client above, or change your search.</p>'}</div><div class="location-state">${icon('pin')}<span>Location will be captured when you start.</span></div><button class="btn btn-primary btn-block sticky-save" data-action="confirm-start" data-id="${esc(selected)}" ${selected?'':'disabled'}>Start visit now</button></section></div>`;render();
 }
 
 function taskModal(taskId = null, prefill = {}) {
@@ -565,12 +569,14 @@ function tripFormModal(tripId = null) {
   render();
 }
 
-function customerFormModal(customerId = null) {
+function customerFormModal(customerId = null, fromVisit = false) {
+  clientFormFromVisit=fromVisit;
   const existing = customerId ? customer(customerId) : null;
   const item = existing || { name:'', type:'Restaurant', area:'', address:'', contact:'', role:'', email:'', phone:'', opportunity:'', value:0, lat:null, lng:null, menuChangeDate:null, menuChangeMonth:'', listingsReopenAt:null, listingsReopenMonth:'', listingReminderDays:60, listingCycleNotes:'' };
+  if(fromVisit&&data.visitStartDraft?.client)Object.assign(item,data.visitStartDraft.client);
   const types = ['Restaurant','Café','Bar','Retail','Hotel','Distributor','Other'];
   modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="customer-form" data-id="${existing?.id||''}">
-    <div class="handle"></div><div class="modal-head"><h2>${existing?'Edit client':'Add new client'}</h2><button type="button" class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div>
+    ${fromVisit?'<button class="text-btn" type="button" data-action="back-to-visit">← Back to client search</button>':''}<div class="handle"></div><div class="modal-head"><h2>${existing?'Edit client':'Add new client'}</h2><button type="button" class="close-btn" data-action="${fromVisit?'back-to-visit':'close-modal'}" aria-label="Close">${icon('x')}</button></div>
     <p style="color:var(--muted);margin:-7px 0 18px">${existing?'Update the client and contact information.':'Add the basics now. You can pin the exact venue location when you arrive.'}</p>
     <div class="form-group"><label>Client or venue name *</label><input class="field" name="name" maxlength="120" required value="${esc(item.name)}" placeholder="Example: Riverside Bistro"></div>
     <div class="form-grid"><div class="form-group"><label>Client type</label><select class="field" name="type">${types.map(type=>`<option ${item.type===type?'selected':''}>${type}</option>`).join('')}</select></div><div class="form-group"><label>Area</label><input class="field" name="area" maxlength="120" value="${esc(item.area)}" placeholder="Rosebank"></div></div>
@@ -585,8 +591,8 @@ function customerFormModal(customerId = null) {
     <div class="form-grid"><div class="form-group"><label>Menu / wine-list change date</label><input class="field" name="menuChangeDate" type="date" value="${dateInput(item.menuChangeDate)}"></div><div class="form-group"><label>Or known month</label><input class="field" name="menuChangeMonth" type="month" value="${esc(item.menuChangeMonth||'')}"></div></div>
     <div class="form-grid"><div class="form-group"><label>Listings reopen date</label><input class="field" name="listingsReopenAt" type="date" value="${dateInput(item.listingsReopenAt)}"></div><div class="form-group"><label>Or reopen month</label><input class="field" name="listingsReopenMonth" type="month" value="${esc(item.listingsReopenMonth||'')}"></div></div><div class="form-group"><label>Remind me beforehand</label><select class="field" name="listingReminderDays">${LISTING_REMINDER_DAYS.map(days=>`<option value="${days}" ${Number(item.listingReminderDays||60)===days?'selected':''}>${days} days</option>`).join('')}</select></div>
     <div class="form-group"><label>Listing-cycle notes</label><textarea class="field" name="listingCycleNotes" maxlength="2000" placeholder="Example: Buyer reviews the list with the owner in November">${esc(item.listingCycleNotes||'')}</textarea></div>
-    <label class="location-option"><input type="checkbox" name="useCurrentLocation"><span>${icon('pin')}<span><strong>${existing&&hasCustomerLocation(existing)?'Replace saved location':'Pin current device location'}</strong><small>${data.travel.lastPosition?'Use the most recently captured device position':'Use “Save this location” from the client profile when on site'}</small></span></span></label>
-    <button class="btn btn-primary btn-block" type="submit">${existing?'Save changes':'Add client'}</button>
+    <label class="location-option"><input type="checkbox" name="useCurrentLocation" ${item.useCurrentLocation==='on'?'checked':''}><span>${icon('pin')}<span><strong>${existing&&hasCustomerLocation(existing)?'Replace saved location':'Pin current device location'}</strong><small>${data.travel.lastPosition?'Use the most recently captured device position':'Use “Save this location” from the client profile when on site'}</small></span></span></label>
+    <button class="btn btn-primary btn-block" type="submit">${existing?'Save changes':fromVisit?'Save client & start visit':'Add client'}</button>
   </form></div>`;
   render();
 }
@@ -603,7 +609,7 @@ function settingsModal() {
     : cloudState.signedIn
       ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div>${cloudState.error?`<button class="btn btn-secondary btn-block" data-action="cloud-review">Review sync differences</button>`:''}<div></div></div>`
       : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Pilot access is invitation-only. Sign in with the account created for you to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="Your password"></div><button class="btn btn-primary btn-block" type="submit">Sign in</button>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
-  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>${localSaveFailed?'Needs attention':'Available on this device'}</strong></div><div class="info-line"><span>KM rate</span><strong>${currency(data.travel.ratePerKm)}/km</strong></div></div>${cloudPanel}<div class="card info-card"><h3>Device backup</h3><p class="muted-copy">Download a complete copy before changing phones or clearing browser data.</p><div class="form-grid"><button class="btn btn-secondary" data-action="export-backup">${icon('download')} Export</button><button class="btn btn-ghost" data-action="import-backup">Import</button></div><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block destructive-link" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
+  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><button class="btn btn-secondary btn-block" data-action="edit-profile">Edit my details</button><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>${localSaveFailed?'Needs attention':'Available on this device'}</strong></div><div class="info-line"><span>KM rate</span><strong>${currency(data.travel.ratePerKm)}/km</strong></div></div>${cloudPanel}<div class="card info-card"><h3>Device backup</h3><p class="muted-copy">Download a complete copy before changing phones or clearing browser data.</p><div class="form-grid"><button class="btn btn-secondary" data-action="export-backup">${icon('download')} Export</button><button class="btn btn-ghost" data-action="import-backup">Import</button></div><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block destructive-link" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
 }
 
 function installHelpModal() {
@@ -692,7 +698,7 @@ function startTravelTracking() {
   if (data.travel.activeTrip) { screen='travel'; resumeTravelTracking(); render(); return; }
   captureDeviceLocation(point => {
     const nearest = nearestCustomer(point);
-    data.travel.activeTrip = { id:`trip${Date.now()}`, start:new Date().toISOString(), points:[point], fromCustomerId:nearest?.km<=.5?nearest.customer.id:null, fromLabel:nearest?.km<=.5?'':`GPS ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`, purpose:'Customer visit', lastAccuracy:point.accuracy };
+    data.travel.activeTrip = { id:`trip${Date.now()}`, start:new Date().toISOString(), points:[point], ratePerKm:data.travel.ratePerKm, fromCustomerId:nearest?.km<=.5?nearest.customer.id:null, fromLabel:nearest?.km<=.5?'':`GPS ${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`, purpose:'Customer visit', lastAccuracy:point.accuracy };
     save(); screen='travel'; render(); resumeTravelTracking(); toast('Mileage tracking started');
   }, 'Allow precise location to record business travel.');
 }
@@ -708,9 +714,10 @@ function stopTravelTracking({ customerId = null, endPoint = null, purpose = 'Cus
   const last = active.points.at(-1) || data.travel.lastPosition;
   const nearest = last ? nearestCustomer(last) : null;
   const distanceKm = routeDistanceKm(active.points);
+  const ratePerKm=active.ratePerKm??data.travel.ratePerKm;
   const destinationId=customerId||(nearest?.km<=.5?nearest.customer.id:null);
-  data.travel.trips.push({ id:active.id, start:active.start, end:new Date().toISOString(), points:active.points, fromCustomerId:active.fromCustomerId, toCustomerId:destinationId, customerId:destinationId, fromLabel:active.fromLabel, toLabel:destinationId?'':last?`GPS ${last.lat.toFixed(5)}, ${last.lng.toFixed(5)}`:'End location', purpose:purpose||active.purpose||'Business travel', startOdometer:null, endOdometer:null, notes:'', distanceSource:'gps', distanceKm, ratePerKm:data.travel.ratePerKm, reimbursement:distanceKm*data.travel.ratePerKm });
-  data.travel.activeTrip=null; save(); render(); toast(`${distanceKm.toFixed(1)} km saved · ${currency(reimbursement(distanceKm))} claim`);
+  data.travel.trips.push({ id:active.id, start:active.start, end:new Date().toISOString(), points:active.points, fromCustomerId:active.fromCustomerId, toCustomerId:destinationId, customerId:destinationId, fromLabel:active.fromLabel, toLabel:destinationId?'':last?`GPS ${last.lat.toFixed(5)}, ${last.lng.toFixed(5)}`:'End location', purpose:purpose||active.purpose||'Business travel', startOdometer:null, endOdometer:null, notes:'', distanceSource:'gps', distanceKm, ratePerKm, reimbursement:distanceKm*ratePerKm });
+  data.travel.activeTrip=null; save(); render(); toast(`${distanceKm.toFixed(1)} km saved · ${currency(distanceKm*ratePerKm)} claim`);
   if(promptDetails) tripFormModal(active.id);
 }
 
@@ -745,13 +752,12 @@ document.addEventListener('click', async event => {
     modal=null;render();
   }
   else if(action==='settings')settingsModal();
-  else if(action==='start-visit')startVisitModal(target.dataset.id);
-  else if(action==='select-visit-customer'){startVisitModal(target.dataset.id);}
-  else if(action==='confirm-start'){
-    const c=customer(target.dataset.id); target.disabled=true; target.innerHTML=`${icon('pin')} Capturing location…`;
-    const finish=(coords,label)=>{const point=coords?{lat:coords.latitude,lng:coords.longitude,accuracy:coords.accuracy,capturedAt:new Date().toISOString()}:null;if(data.travel.activeTrip)stopTravelTracking({customerId:c.id,endPoint:point,purpose:'Customer visit',promptDetails:false});if(point)data.travel.lastPosition=point;const firstPin=point&&!hasCustomerLocation(c);if(firstPin){c.lat=point.lat;c.lng=point.lng;}const venueDistance=point?geoDistanceKm(point,{lat:c.lat,lng:c.lng}):Infinity;const locationLabel=firstPin?'Venue pinned from first visit':point?`${label} · ${distanceLabel(venueDistance)} from venue`:label;data.activeVisit={id:`v${Date.now()}`,customerId:c.id,start:new Date().toISOString(),lat:point?.lat??c.lat,lng:point?.lng??c.lng,locationLabel,note:'',wineOutcomes:[],feedbackOutcome:'General relationship visit',currentWineIds:winesForCustomer(c.id).filter(item=>item.status==='Listed').map(item=>item.wineId),contactSnapshot:{placeName:c.name||'',person:c.contact||'',role:c.role||'',address:c.address||'',phone:c.phone||'',email:c.email||''},nextAction:'',followUpRequired:false,followUpAt:'',followUpReason:'',followUpContact:c.contact||'',menuChangeDate:dateInput(c.menuChangeDate),menuChangeMonth:c.menuChangeMonth||'',listingsReopenAt:dateInput(c.listingsReopenAt),listingsReopenMonth:c.listingsReopenMonth||'',listingReminderDays:c.listingReminderDays||60};save();modal=null;screen='visit';render();toast(firstPin?'Visit started and client location pinned':'Visit started and location saved');};
-    if(navigator.geolocation) navigator.geolocation.getCurrentPosition(p=>finish(p.coords,'Live location captured'),()=>finish(null,'Venue location used'),{enableHighAccuracy:true,timeout:6000,maximumAge:60000}); else finish(null,'Venue location used');
-  }
+  else if(action==='start-visit'){if(target.dataset.id&&data.visitStartDraft)data.visitStartDraft.query='';startVisitModal(target.dataset.id);}
+  else if(action==='select-visit-customer'){startVisitModal(target.dataset.id);persistLocal();}
+  else if(action==='visit-add-client')customerFormModal(null,true);
+  else if(action==='back-to-visit')startVisitModal();
+  else if(action==='edit-profile')profileModal();
+  else if(action==='confirm-start')beginClientVisit(target.dataset.id,target);
   else if(action==='customer')customerDetail(target.dataset.id);
   else if(action==='visit-detail')visitDetail(target.dataset.id);
   else if(action==='product-detail')productDetail(target.dataset.id);
@@ -842,6 +848,12 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if(event.target.id==='visit-client-search'){
+    const pos=event.target.selectionStart;data.visitStartDraft.query=event.target.value;startVisitModal();const input=document.getElementById('visit-client-search');input?.focus();input?.setSelectionRange(pos,pos);try{persistLocal();}catch{}
+  }
+  if(clientFormFromVisit&&event.target.closest('#customer-form')){
+    data.visitStartDraft ||= {query:'',selected:null};data.visitStartDraft.client=Object.fromEntries(new FormData(event.target.closest('form')));try{persistLocal();}catch{}
+  }
   if(event.target.id==='search'){query=event.target.value; const pos=event.target.selectionStart;render();const input=document.getElementById('search');input?.focus();input?.setSelectionRange(pos,pos);}
   if(event.target.id==='wine-picker-search'){modalQuery=event.target.value;const pos=event.target.selectionStart;winePickerModal(pickerContext?.mode||'visit',pickerContext?.customerId||null);const input=document.getElementById('wine-picker-search');input?.focus();input?.setSelectionRange(pos,pos);}
   if(event.target.id==='visit-note'&&data.activeVisit){stopVoiceCapture();data.activeVisit.note=event.target.value;try{save();}catch{showSaveWarning();}}
@@ -878,6 +890,15 @@ document.addEventListener('submit', async event => {
     try{save();}catch{Object.assign(visit,before);return;}
     visitDetail(visit.id);toast('Visit corrections saved');
   }
+  if(event.target.id==='profile-form'){
+    const fd=new FormData(event.target),rate=Number(fd.get('rate')),profile={name:String(fd.get('name')||'').trim(),initials:String(fd.get('initials')||'').trim().toUpperCase(),territory:String(fd.get('territory')||'').trim()};
+    if(!profile.name||!profile.initials||!profile.territory||!Number.isFinite(rate)||rate<0.01||rate>1000||Math.abs(rate*100-Math.round(rate*100))>0.000001){toast('Complete your details and enter a rate from R0.01 to R1,000 with up to two decimals.');return;}
+    const before=clone(data);
+    if(data.travel.activeTrip&&data.travel.activeTrip.ratePerKm==null)data.travel.activeTrip.ratePerKm=data.travel.ratePerKm;
+    data.profile=profile;data.travel.ratePerKm=rate;
+    try{save();}catch{data=before;return;}
+    settingsModal();toast('Your details are saved. New trips use the updated rate.');
+  }
   if(event.target.id==='ask-form'){const input=document.getElementById('ask-input');ask(input.value);}
   if(event.target.id==='auth-form'){
     const fd=new FormData(event.target);const email=String(fd.get('email')||'').trim();const password=String(fd.get('password')||'');
@@ -901,11 +922,17 @@ document.addEventListener('submit', async event => {
     }catch(error){toast(error.message);}
   }
   if(event.target.id==='customer-form'){
+    const before=clone(data);const fromVisit=clientFormFromVisit;if(fromVisit&&startingVisit)return;
     const fd=new FormData(event.target); const id=event.target.dataset.id; const existing=id?customer(id):null; const useCurrent=fd.get('useCurrentLocation')==='on'&&data.travel.lastPosition;
     const values={name:String(fd.get('name')).trim(),type:String(fd.get('type')),area:String(fd.get('area')).trim(),address:String(fd.get('address')).trim(),contact:String(fd.get('contact')).trim(),role:String(fd.get('role')).trim(),email:String(fd.get('email')).trim(),phone:String(fd.get('phone')).trim(),opportunity:String(fd.get('opportunity')).trim(),value:Number(fd.get('value'))||0,menuChangeDate:String(fd.get('menuChangeDate')||'')||null,menuChangeMonth:String(fd.get('menuChangeMonth')||''),listingsReopenAt:dateTimeAtNine(String(fd.get('listingsReopenAt')||'')),listingsReopenMonth:String(fd.get('listingsReopenMonth')||''),listingReminderDays:Number(fd.get('listingReminderDays'))||60,listingCycleNotes:String(fd.get('listingCycleNotes')||'').trim()};
+    if(!values.name){toast('Enter a client name.');return;}
     if(existing){Object.assign(existing,values);if(useCurrent){existing.lat=data.travel.lastPosition.lat;existing.lng=data.travel.lastPosition.lng;}}
     else {data.customers.push({id:`c${Date.now()}`,...values,lastVisit:null,lat:useCurrent?data.travel.lastPosition.lat:null,lng:useCurrent?data.travel.lastPosition.lng:null,createdAt:new Date().toISOString()});}
-    save();modal=null;screen='customers';filter='All';query='';render();toast(existing?'Client details updated':'New client added');
+    const savedId=existing?.id||data.customers.at(-1).id;
+    if(fromVisit)data.visitStartDraft={query:'',selected:savedId,client:null};
+    try{save();}catch{data=before;return;}
+    if(fromVisit){beginClientVisit(savedId,event.target.querySelector('[type="submit"]'));return;}
+    modal=null;screen='customers';filter='All';query='';render();toast(existing?'Client details updated':'New client added');
   }
 });
 
@@ -965,5 +992,19 @@ initializeCloud({
   getData:()=>data,
   setData:remote=>{data=normalizeWorkspace({...data,...remote},realProducts);persistLocal();screen=data.activeVisit?'visit':'home';modal=null;render();toast('Cloud data is ready on this device.');},
   onIdentityChange:user=>activateWorkspace(user),
-  onStatus:next=>{if(next.lastSynced&&next.lastSynced!==cloudState.lastSynced&&!next.error)cloudDirty=false;cloudState=next;if(screen==='home'||modal?.includes('data-modal="settings"'))render();}
+  onStatus:next=>{if(next.lastSynced&&next.lastSynced!==cloudState.lastSynced&&!next.error)cloudDirty=false;cloudState=next;if((screen==='home'&&!modal)||modal?.includes('data-modal="settings"'))render();}
 });
+
+
+let startingVisit=false;
+function beginClientVisit(id,button){
+  const c=customer(id);if(!c||startingVisit||data.activeVisit)return;
+  startingVisit=true;
+  const workspace=activeWorkspaceKey;
+  if(button){button.disabled=true;button.textContent='Capturing location…';}
+    const finish=(coords,label)=>{startingVisit=false;if(workspace!==activeWorkspaceKey||data.activeVisit)return;const before=clone(data);const point=coords?{lat:coords.latitude,lng:coords.longitude,accuracy:coords.accuracy,capturedAt:new Date().toISOString()}:null;if(data.travel.activeTrip)stopTravelTracking({customerId:c.id,endPoint:point,purpose:'Customer visit',promptDetails:false});if(point)data.travel.lastPosition=point;const firstPin=point&&!hasCustomerLocation(c);if(firstPin){c.lat=point.lat;c.lng=point.lng;}const venueDistance=point?geoDistanceKm(point,{lat:c.lat,lng:c.lng}):Infinity;const locationLabel=firstPin?'Venue pinned from first visit':point?`${label} · ${distanceLabel(venueDistance)} from venue`:label;data.activeVisit={id:`v${Date.now()}`,customerId:c.id,start:new Date().toISOString(),lat:point?.lat??c.lat,lng:point?.lng??c.lng,locationLabel,note:'',wineOutcomes:[],feedbackOutcome:'General relationship visit',currentWineIds:winesForCustomer(c.id).filter(item=>item.status==='Listed').map(item=>item.wineId),contactSnapshot:{placeName:c.name||'',person:c.contact||'',role:c.role||'',address:c.address||'',phone:c.phone||'',email:c.email||''},nextAction:'',followUpRequired:false,followUpAt:'',followUpReason:'',followUpContact:c.contact||'',menuChangeDate:dateInput(c.menuChangeDate),menuChangeMonth:c.menuChangeMonth||'',listingsReopenAt:dateInput(c.listingsReopenAt),listingsReopenMonth:c.listingsReopenMonth||'',listingReminderDays:c.listingReminderDays||60};data.visitStartDraft=null;try{save();}catch{data=before;startVisitModal(c.id);return;}modal=null;screen='visit';render();toast(firstPin?'Visit started and client location pinned':'Visit started and location saved');};
+    if(navigator.geolocation) navigator.geolocation.getCurrentPosition(p=>finish(p.coords,'Live location captured'),()=>finish(null,'Venue location used'),{enableHighAccuracy:true,timeout:6000,maximumAge:60000}); else finish(null,'Venue location used');
+}
+function profileModal(){
+  modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="profile-form"><div class="modal-head"><h2>My details</h2><button type="button" class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><div class="form-group"><label for="profile-name">Your name</label><input class="field" id="profile-name" name="name" maxlength="120" required value="${esc(data.profile.name)}"></div><div class="form-group"><label for="profile-initials">Initials</label><input class="field" id="profile-initials" name="initials" maxlength="8" required value="${esc(data.profile.initials)}"></div><div class="form-group"><label for="profile-territory">Sales territory</label><input class="field" id="profile-territory" name="territory" maxlength="120" required value="${esc(data.profile.territory)}"></div><div class="form-group"><label for="profile-rate">Reimbursement rate (R per km)</label><input class="field" id="profile-rate" name="rate" type="number" inputmode="decimal" min="0.01" max="1000" step="0.01" required value="${Number(data.travel.ratePerKm).toFixed(2)}"></div><p class="modal-hint">The new rate applies to trips started after this change. Completed trips and a trip already in progress keep their original rate.</p><button class="btn btn-primary btn-block" type="submit">Save my details</button></form></div>`;render();
+}
