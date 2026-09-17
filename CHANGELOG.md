@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-17 — v14: share the original price-list PDF
+
+- Added Send PDF on Price List and Send price-list PDF in client details. Shares the supplied seven-page supplier PDF unchanged, including when a product filter is active.
+- Client chooser and copy-email control support Outlook recipient entry. Uses native file sharing after preloading, preserving the tap required by mobile browsers. Hand-off never claims email delivery.
+- Download PDF and explicitly manual-attachment email draft are available when native sharing is unsupported or denied. Cancellation is non-destructive; failed downloads offer retry.
+- Cached the PDF for offline access. Fixed duplicate relative/absolute URLs in the existing offline installer. Keep the PDF panel ready and selected client intact through connection-state redraws.
+- No database migration, CRM changes, or demo records. The supplier PDF is a public static asset, like the existing public catalogue.
+- Tests: 28 unit/regression tests; production build; original PDF SHA-256 match; isolated 412px browser tests for mocked attachment sharing, cancellation, denial, download, offline reload, client context, unsupported browser and retry. No runtime errors in passing workflow.
+- Limits: actual Android-to-Outlook attachment hand-off requires phone testing. Native sharing cannot prefill a recipient reliably; copy/paste the client email and confirm Send in Outlook. Email draft fallback does not attach files automatically.
+- Local preview note: Vite's Vary: Origin headers affect offline cache matching; offline checks pass on a production-style static server.
+
 ## 2026-09-17 — v13: August supplier price list
 
 - Imported all 292 priced rows from NiewBev - On Con Price list 01.08.2026.xlsx, effective 1 August 2026, including 204 additions.

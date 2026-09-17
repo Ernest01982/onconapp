@@ -1,4 +1,5 @@
 import { realProducts, PRICE_LIST_DATE } from './products-data.js';
+import { PRICE_LIST_PDF_URL, PRICE_LIST_PDF_NAME, loadPriceListPdf, canSharePdf, sharePriceListPdf } from './price-list-pdf.js';
 import { initializeCloud, refreshCloud, reviewCloudDifferences, resolveCloudDifference, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
 import {
   FEEDBACK_OUTCOMES,
@@ -384,7 +385,7 @@ function productsView() {
     (productFilter === 'All' || p.brand === productFilter) &&
     (productRelationshipFilter === 'All' || customersForWine(p.id).some(item=>productRelationshipFilter==='Listed'?item.status==='Listed':productRelationshipFilter==='Interested'?PIPELINE_STATUSES.includes(item.status):item.followUpAt&&new Date(item.followUpAt)<=new Date()))
   );
-  return `${topbar('Price list','Niew Beverages · On Con')}<main class="content"><div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search wine, producer, variety or vintage"></div><div class="filter-row"><button class="filter-chip ${productRelationshipFilter==='All'?'active':''}" data-action="product-status-filter" data-value="All">All</button><button class="filter-chip ${productRelationshipFilter==='Listed'?'active':''}" data-action="product-status-filter" data-value="Listed">Listed</button><button class="filter-chip ${productRelationshipFilter==='Interested'?'active':''}" data-action="product-status-filter" data-value="Interested">Interested</button><button class="filter-chip ${productRelationshipFilter==='Follow-up'?'active':''}" data-action="product-status-filter" data-value="Follow-up">Follow-up</button></div><div class="filter-row"><button class="filter-chip ${productFilter==='All'?'active':''}" data-action="product-brand" data-value="All">All producers · ${currentProducts.length}</button>${brands.map(brand=>`<button class="filter-chip ${productFilter===brand?'active':''}" data-action="product-brand" data-value="${esc(brand)}">${esc(brand)} · ${currentProducts.filter(p=>p.brand===brand).length}</button>`).join('')}</div><div class="hero card compact-hero"><p class="eyebrow">On Con price list · ${PRICE_LIST_DATE}</p><h2>${productFilter==='All'?'Complete portfolio':esc(productFilter)}</h2><p>${products.length} products shown. Open a wine to see listings and pipeline.</p><div class="hero-actions"><button class="btn btn-primary" data-action="email-pricelist">${icon('mail')} Email this list</button><button class="btn btn-white" data-action="print-pricelist">Print</button></div></div><div class="list">${products.map(p=>{const relations=customersForWine(p.id),listed=relations.filter(item=>item.status==='Listed').length,pipeline=relations.filter(item=>PIPELINE_STATUSES.includes(item.status)).length;return `<article class="card product-card interactive" data-action="product-detail" data-id="${p.id}" tabindex="0"><div class="product-head"><div><h3>${esc(p.name)}</h3><p>${esc(p.sku)} · ${esc(p.brand)} · ${esc(p.range)}</p></div>${listed?`<span class="status listed">${listed} listed</span>`:p.availability==='Confirm availability'?'<span class="status hot">Confirm stock</span>':''}</div><div class="price-pair"><div><span>${p.packCount ? 'Case' : 'Item'} incl. VAT</span><strong>${currency(p.price)}</strong>${p.exCase!=null?`<small>${currency(p.exCase)} excl.</small>`:''}</div><div><span>Unit incl. VAT</span><strong>${p.unitPrice!=null?currency(p.unitPrice):'—'}</strong>${p.exUnit!=null?`<small>${currency(p.exUnit)} excl.</small>`:''}</div></div><div class="product-foot"><span class="status">${esc(p.pack)}</span>${p.availability!=='Available'?`<span class="status">${esc(p.availability)}</span>`:''}<span class="wine-counts">${listed} listed · ${pipeline} pipeline</span></div></article>`}).join('') || emptyState('search','No products found','Try another wine, producer, variety, vintage or filter.')}</div></main>${nav()}`;
+  return `${topbar('Price list','Niew Beverages · On Con')}<main class="content"><div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search wine, producer, variety or vintage"></div><div class="filter-row"><button class="filter-chip ${productRelationshipFilter==='All'?'active':''}" data-action="product-status-filter" data-value="All">All</button><button class="filter-chip ${productRelationshipFilter==='Listed'?'active':''}" data-action="product-status-filter" data-value="Listed">Listed</button><button class="filter-chip ${productRelationshipFilter==='Interested'?'active':''}" data-action="product-status-filter" data-value="Interested">Interested</button><button class="filter-chip ${productRelationshipFilter==='Follow-up'?'active':''}" data-action="product-status-filter" data-value="Follow-up">Follow-up</button></div><div class="filter-row"><button class="filter-chip ${productFilter==='All'?'active':''}" data-action="product-brand" data-value="All">All producers · ${currentProducts.length}</button>${brands.map(brand=>`<button class="filter-chip ${productFilter===brand?'active':''}" data-action="product-brand" data-value="${esc(brand)}">${esc(brand)} · ${currentProducts.filter(p=>p.brand===brand).length}</button>`).join('')}</div><div class="hero card compact-hero"><p class="eyebrow">On Con price list · ${PRICE_LIST_DATE}</p><h2>${productFilter==='All'?'Complete portfolio':esc(productFilter)}</h2><p>${products.length} products shown. Open a wine to see listings and pipeline.</p><div class="hero-actions"><button class="btn btn-primary" data-action="open-pdf-share">${icon('mail')} Send PDF</button><button class="btn btn-white" data-action="email-pricelist">Email prices as text</button><button class="btn btn-white" data-action="print-pricelist">Print</button></div></div><div class="list">${products.map(p=>{const relations=customersForWine(p.id),listed=relations.filter(item=>item.status==='Listed').length,pipeline=relations.filter(item=>PIPELINE_STATUSES.includes(item.status)).length;return `<article class="card product-card interactive" data-action="product-detail" data-id="${p.id}" tabindex="0"><div class="product-head"><div><h3>${esc(p.name)}</h3><p>${esc(p.sku)} · ${esc(p.brand)} · ${esc(p.range)}</p></div>${listed?`<span class="status listed">${listed} listed</span>`:p.availability==='Confirm availability'?'<span class="status hot">Confirm stock</span>':''}</div><div class="price-pair"><div><span>${p.packCount ? 'Case' : 'Item'} incl. VAT</span><strong>${currency(p.price)}</strong>${p.exCase!=null?`<small>${currency(p.exCase)} excl.</small>`:''}</div><div><span>Unit incl. VAT</span><strong>${p.unitPrice!=null?currency(p.unitPrice):'—'}</strong>${p.exUnit!=null?`<small>${currency(p.exUnit)} excl.</small>`:''}</div></div><div class="product-foot"><span class="status">${esc(p.pack)}</span>${p.availability!=='Available'?`<span class="status">${esc(p.availability)}</span>`:''}<span class="wine-counts">${listed} listed · ${pipeline} pipeline</span></div></article>`}).join('') || emptyState('search','No products found','Try another wine, producer, variety, vintage or filter.')}</div></main>${nav()}`;
 }
 
 function reportsView() {
@@ -483,7 +484,7 @@ function customerDetail(id) {
   const relationshipRows=relations.map(relation=>{const product=wine(relation.wineId);return `<div class="card wine-relation ${relationshipTone(relation.status)}"><button class="relation-main" data-action="edit-customer-wine" data-id="${relation.id}"><strong>${esc(product?.name||'Wine')}</strong><span class="status ${relationshipTone(relation.status)}">${esc(relation.status)}</span><small>${relation.status==='Listed'&&relation.listingDate?`Listed ${shortDate(relation.listingDate)}`:relation.followUpAt?`Follow up ${dayLabel(relation.followUpAt)}`:'Updated '+shortDate(relation.updatedAt)}</small>${relation.allocation?`<small>Allocation: ${esc(relation.allocation)}</small>`:''}</button><div class="relation-actions">${relation.status!=='Listed'?`<button class="mini-btn positive" data-action="set-wine-status" data-id="${relation.id}" data-status="Listed">Mark listed</button>`:''}${relation.status==='Listed'?`<button class="mini-btn" data-action="set-wine-status" data-id="${relation.id}" data-status="Delisted">Delist</button>`:''}<button class="mini-btn" data-action="wine-follow-up" data-id="${relation.id}">Follow-up</button></div></div>`}).join('');
   modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(c.name)} details">
     <div class="handle"></div><div class="modal-head"><span></span><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div>
-    <div class="card detail-banner"><span class="status good">${esc(c.type)}</span><h2>${esc(c.name)}</h2><p>${esc(c.area||'Area not added')} · ${c.lastVisit?`last visit ${dayLabel(c.lastVisit)}`:'never visited'}</p><div class="detail-actions"><button class="btn btn-primary" data-action="start-visit" data-id="${c.id}">${icon('plus')} Start visit</button><button class="btn btn-white" data-action="edit-customer" data-id="${c.id}">Edit details</button><a class="btn btn-white" style="text-decoration:none" href="mailto:${encodeURIComponent(c.email)}">${icon('mail')} Email</a><button class="btn btn-white" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} Save this location</button></div></div>
+    <div class="card detail-banner"><span class="status good">${esc(c.type)}</span><h2>${esc(c.name)}</h2><p>${esc(c.area||'Area not added')} · ${c.lastVisit?`last visit ${dayLabel(c.lastVisit)}`:'never visited'}</p><div class="detail-actions"><button class="btn btn-primary" data-action="start-visit" data-id="${c.id}">${icon('plus')} Start visit</button><button class="btn btn-white" data-action="edit-customer" data-id="${c.id}">Edit details</button><button class="btn btn-white" data-action="open-pdf-share" data-id="${c.id}">${icon('mail')} Send price-list PDF</button><a class="btn btn-white" style="text-decoration:none" href="mailto:${encodeURIComponent(c.email)}">${icon('mail')} Email</a><button class="btn btn-white" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} Save this location</button></div></div>
     <div class="section-row"><h2>Contact</h2></div><div class="card info-card"><h3>${esc(c.contact||'No contact added')}</h3><p style="margin:-6px 0 12px;color:var(--muted)">${esc(c.role||'Role not added')}</p><div class="info-line"><span>Email</span><strong>${esc(c.email||'Not added')}</strong></div><div class="info-line"><span>Phone</span><strong>${esc(c.phone||'Not added')}</strong></div>${c.address?`<div class="info-line"><span>Address</span><strong>${esc(c.address)}</strong></div>`:''}</div>
     <div class="section-row"><h2>Saved location</h2></div><div class="card info-card">${hasCustomerLocation(c)?`<div class="info-line" style="border:0;padding-top:0"><span>Latitude</span><strong>${c.lat.toFixed(5)}</strong></div><div class="info-line"><span>Longitude</span><strong>${c.lng.toFixed(5)}</strong></div>`:`<p style="margin:0 0 14px;color:var(--muted);font-size:13px">No venue position saved yet. Pin it while you are at the client.</p>`}<button class="btn btn-secondary btn-block btn-small" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} ${hasCustomerLocation(c)?'Update':'Save'} from this device</button></div>
     <div class="section-row"><h2>Opportunity</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>${esc(c.opportunity)}</span><strong>${currency(c.value)}</strong></div></div>
@@ -627,11 +628,17 @@ function emptyState(ic,title,text){return `<div class="card empty"><div class="d
 
 function render() {
   stopVoiceCapture();
+  const pdfClient=document.getElementById('pdf-client')?.value;
   const cycleOpen=document.querySelector('.visit-cycle-details')?.open;
   clearInterval(timerId);
   clearInterval(travelTimerId);
   const views={home:homeView,customers:customersView,activity:activityView,travel:travelView,products:productsView,reports:reportsView,assistant:assistantView,visit:visitView};
   document.getElementById('app').innerHTML=(views[screen]||homeView)()+(modal||'');
+  if(document.getElementById('pdf-share-panel')){
+    if(pdfClient!==undefined)document.getElementById('pdf-client').value=pdfClient;
+    updatePdfRecipient();
+    preparePdfShare();
+  }
   if(cycleOpen&&document.querySelector('.visit-cycle-details'))document.querySelector('.visit-cycle-details').open=true;
   if (data.activeVisit) timerId=setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>el.textContent=duration(data.activeVisit.start)),1000);
   if (data.travel.activeTrip) {
@@ -815,6 +822,28 @@ document.addEventListener('click', async event => {
     data.activeVisit=null;try{save();}catch{data=before;showSaveWarning();return;}screen='home';render();toast(tasksAdded?'Visit saved and follow-up added':'Visit saved');
   }
   else if(action==='ask')ask(target.dataset.value);
+  else if(action==='open-pdf-share')openPdfShare(target.dataset.id);
+  else if(action==='retry-pdf')preparePdfShare();
+  else if(action==='share-pdf'){
+    target.disabled=true;
+    const result=await sharePriceListPdf(priceListPdfFile);
+    target.disabled=false;
+    if(result==='shared')toast('PDF handed to your chosen app. Review the recipient and send there.');
+    else if(result==='failed'||result==='unsupported')toast('File sharing is unavailable. Download the PDF and attach it to your email.');
+  }
+  else if(action==='copy-pdf-email'){
+    const input=document.getElementById('pdf-recipient-email');
+    if(!input?.value)return;
+    try{await navigator.clipboard.writeText(input.value);toast('Client email copied');}
+    catch{input.focus();input.select();toast('Press and hold the selected address to copy it.');}
+  }
+  else if(action==='pdf-email-draft'){
+    const client=customer(document.getElementById('pdf-client')?.value);
+    const subject='Niew Beverages On Con price list — '+PRICE_LIST_DATE;
+    const body='Hi '+(client?.contact||'')+',\n\nHere is the Niew Beverages On Con price list effective '+PRICE_LIST_DATE+'.\n\nRegards,\n'+data.profile.name;
+    window.location.href='mailto:'+encodeURIComponent(client?.email||'')+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+    toast('Attach the downloaded PDF in your email app before sending.');
+  }
   else if(action==='email-pricelist')emailPriceList();
   else if(action==='print-pricelist')window.print();
   else if(action==='export-km')exportKmCsv();
@@ -977,6 +1006,64 @@ function editVisitModal(id){
   const visit=data.visits.find(item=>item.id===id);if(!visit)return;
   modal=`<div class="modal-backdrop" data-action="close-modal"><form class="modal" id="edit-visit-form" data-id="${esc(id)}"><div class="modal-head"><h2>Edit visit notes</h2><button class="close-btn" type="button" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><p class="modal-hint">Correct this visit without creating another visit, changing listing history or duplicating reminders. Use the linked follow-up to reschedule.</p><div class="form-group"><label for="edit-raw-note">Full note</label><textarea class="field" id="edit-raw-note" name="rawNote" maxlength="4000">${esc(visit.rawNote??visit.summary??'')}</textarea></div><div class="form-group"><label for="edit-feedback">Feedback / outcome</label><select class="field" id="edit-feedback" name="feedbackOutcome">${FEEDBACK_OUTCOMES.map(value=>`<option ${value===visit.feedbackOutcome?'selected':''}>${esc(value)}</option>`).join('')}</select></div><div class="form-group"><label for="edit-next">Next action</label><input class="field" id="edit-next" name="nextAction" maxlength="1000" value="${esc(visit.nextAction||'')}"></div><button class="btn btn-primary btn-block sticky-save">Save corrections</button></form></div>`;render();
 }
+
+let priceListPdfFile = null;
+let priceListPdfPromise = null;
+let pdfRequestSequence = 0;
+
+function updatePdfRecipient() {
+  const client=customer(document.getElementById('pdf-client')?.value);
+  const email=document.getElementById('pdf-recipient-email');
+  if(email)email.value=client?.email||'';
+  const copy=document.querySelector('[data-action="copy-pdf-email"]');
+  if(copy)copy.disabled=!client?.email;
+}
+
+function openPdfShare(customerId='') {
+  const options=[...data.customers].sort((a,b)=>a.name.localeCompare(b.name));
+  modal='<div class="modal-backdrop" data-action="close-modal"><section class="modal" id="pdf-share-panel" role="dialog" aria-modal="true" aria-label="Send price-list PDF">'
+    +'<div class="modal-head"><h2>Send price-list PDF</h2><button class="close-btn" data-action="close-modal" aria-label="Close">'+icon('x')+'</button></div>'
+    +'<p class="modal-hint">Original supplier PDF · '+PRICE_LIST_DATE+' · 7 pages. Sends the complete supplied PDF, not your current product filter.</p>'
+    +'<div class="form-group"><label for="pdf-client">Client (optional)</label><select class="field" id="pdf-client"><option value="">Choose recipient in your email app</option>'
+    +options.map(c=>'<option value="'+esc(c.id)+'" '+(c.id===customerId?'selected':'')+'>'+esc(c.name)+'</option>').join('')+'</select></div>'
+    +'<div class="form-group"><label for="pdf-recipient-email">Client email</label><input class="field" id="pdf-recipient-email" type="text" readonly placeholder="No saved email — enter it in your email app"><button class="text-btn" data-action="copy-pdf-email">Copy email address</button></div>'
+    +'<p id="pdf-share-status" class="modal-hint" role="status" aria-live="polite">Preparing PDF…</p>'
+    +'<button class="btn btn-primary btn-block" data-action="share-pdf" disabled>'+icon('mail')+' Share PDF attachment</button>'
+    +'<p class="modal-hint">Choose Outlook or another app, paste/select the client’s email, then send. FieldFlow cannot confirm delivery.</p>'
+    +'<a class="btn btn-secondary btn-block" style="text-decoration:none" href="'+PRICE_LIST_PDF_URL+'" download="'+PRICE_LIST_PDF_NAME+'">'+icon('download')+' Download PDF</a>'
+    +'<p class="modal-hint">If sharing is unavailable: download the PDF, open an email draft below, and attach the downloaded file manually.</p>'
+    +'<button class="btn btn-white btn-block" data-action="pdf-email-draft">Open email draft (attach PDF yourself)</button>'
+    +'<button class="text-btn" data-action="retry-pdf" hidden>Retry loading PDF</button></section></div>';
+  render();
+}
+
+async function preparePdfShare() {
+  const request=++pdfRequestSequence;
+  const panel=document.getElementById('pdf-share-panel');
+  if(!panel)return;
+  const status=panel.querySelector('#pdf-share-status');
+  const share=panel.querySelector('[data-action="share-pdf"]');
+  const retry=panel.querySelector('[data-action="retry-pdf"]');
+  status.textContent='Preparing PDF…';
+  share.disabled=true;
+  retry.hidden=true;
+  try {
+    priceListPdfPromise ||= loadPriceListPdf().catch(error=>{priceListPdfPromise=null;throw error;});
+    priceListPdfFile=await priceListPdfPromise;
+    if(request!==pdfRequestSequence||!panel.isConnected)return;
+    const supported=canSharePdf(priceListPdfFile);
+    share.disabled=!supported;
+    status.textContent=supported?'PDF ready to attach.':'This browser cannot share files directly. Use Download PDF below.';
+  } catch {
+    if(request!==pdfRequestSequence||!panel.isConnected)return;
+    status.textContent='Could not load the PDF. Connect to the internet and retry.';
+    retry.hidden=false;
+  }
+}
+
+document.addEventListener('change', event=>{
+  if(event.target.id==='pdf-client')updatePdfRecipient();
+});
 
 function selectedProducts(){return data.products.filter(p=>p.active&&(productFilter==='All'||p.brand===productFilter)&&(productRelationshipFilter==='All'||customersForWine(p.id).some(item=>productRelationshipFilter==='Listed'?item.status==='Listed':productRelationshipFilter==='Interested'?PIPELINE_STATUSES.includes(item.status):item.followUpAt&&new Date(item.followUpAt)<=new Date())));}
 function priceListText(){return selectedProducts().map(p=>`${p.sku} · ${p.name} (${p.pack}) — ${p.packCount ? 'case' : 'item'} ${currency(p.price)}${p.unitPrice!=null?`, unit ${currency(p.unitPrice)}`:''} incl. VAT`).join('\n');}

@@ -1,5 +1,11 @@
 # FieldFlow
 
+### Sending the supplier PDF
+
+Open a client → Send price-list PDF, or Price List → Send PDF. Copy the client email if needed, tap Share PDF attachment, choose Outlook, select/paste the recipient and send there. The original complete seven-page August PDF is attached, regardless of catalogue filters. Browser/device support varies.
+
+If native file sharing is unavailable, Download PDF, open the email draft and attach the downloaded file manually. The app cannot confirm delivery. The public supplier PDF is cached for offline access after a successful online app installation/update; email delivery still needs connectivity.
+
 FieldFlow is a working, mobile-first field sales CRM prototype designed for a Samsung Ultra-sized screen. It is local-first and can securely back up and sync each signed-in user's CRM data through Supabase.
 
 ## Run it

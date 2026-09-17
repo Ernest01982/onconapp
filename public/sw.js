@@ -1,5 +1,5 @@
-const CACHE = 'fieldflow-v13';
-const ASSETS = ['./', './index.html', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png', './icon-512-maskable.png'];
+const CACHE = 'fieldflow-v14';
+const ASSETS = ['./', './index.html', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png', './icon-512-maskable.png', './niewbev-on-con-2026-08-01.pdf'];
 
 async function cacheAppShell() {
   const cache = await caches.open(CACHE);
@@ -10,7 +10,9 @@ async function cacheAppShell() {
     .filter(url => url.origin === self.location.origin)
     .map(url => url.href);
   await cache.put('./index.html', indexResponse);
-  await cache.addAll([...new Set([...ASSETS, ...linkedAssets])]);
+  // Resolve first: relative and absolute references can identify the same file.
+  const assetUrls = [...new Set([...ASSETS, ...linkedAssets].map(path => new URL(path, self.location.href).href))];
+  await cache.addAll(assetUrls);
 }
 
 self.addEventListener('install', event => event.waitUntil(cacheAppShell().then(() => self.skipWaiting())));
