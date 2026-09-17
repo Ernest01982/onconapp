@@ -1,3 +1,5 @@
+import { mergeCatalogue } from './catalogue.js';
+
 export const WINE_STATUSES = [
   'Discussed',
   'Interested',
@@ -28,6 +30,7 @@ const isoNow = () => new Date().toISOString();
 
 export function normalizeWorkspace(workspace, products = []) {
   const normalized = clone(workspace || {});
+  normalized.products = mergeCatalogue(normalized.products, products);
   normalized.customers = Array.isArray(normalized.customers) ? normalized.customers : [];
   normalized.customerWines = Array.isArray(normalized.customerWines) ? normalized.customerWines : [];
   normalized.visits = Array.isArray(normalized.visits) ? normalized.visits : [];
@@ -46,7 +49,7 @@ export function normalizeWorkspace(workspace, products = []) {
     listingCycleNotes: customer.listingCycleNotes || ''
   }));
 
-  const productByName = new Map(products.map(item => [String(item.name || '').toLowerCase(), item.id]));
+  const productByName = new Map(normalized.products.map(item => [String(item.name || '').toLowerCase(), item.id]));
   normalized.visits = normalized.visits.map(visit => ({
     ...visit,
     products: Array.isArray(visit.products) ? visit.products : [],

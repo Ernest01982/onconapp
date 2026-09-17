@@ -21,7 +21,7 @@ For the pilot cloud account, create the intended user in **Supabase Dashboard �
 
 The production site is served over HTTPS and includes a service worker, 192×192 and 512×512 Android icons, a maskable icon, standalone display mode and an offline app shell.
 
-The app starts with an empty CRM and the imported Niew Beverages On Con catalogue effective 1 March 2026. Add real clients as you begin testing; no fictional customers, visits or follow-ups are included.
+The app starts with an empty CRM and the imported Niew Beverages On Con catalogue effective 1 August 2026 (292 current products). Seven older Vinette records are retained as inactive for historical links, not included in current prices. Catalogue updates preserve existing IDs and refresh saved-device and restored prices on load. Add real clients as you begin testing; no fictional customers, visits or follow-ups are included.
 
 ## What works
 

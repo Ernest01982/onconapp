@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-17 — v13: August supplier price list
+
+- Imported all 292 priced rows from NiewBev - On Con Price list 01.08.2026.xlsx, effective 1 August 2026, including 204 additions.
+- Updated case/unit prices including and excluding VAT, pack sizes, barcodes and stock notices. Rounded each supplier price independently to cents; sundries display per-item pricing.
+- Preserved all 95 existing product IDs, including the Namaqua Chenin Blanc alias correction to NAMCB01. Seven Vinette records absent from the new sheet remain inactive for history, excluded from current price lists; restaurant listing statuses are not changed.
+- Added idempotent catalogue refresh on local load, backup restore and cloud hydration, preserving linked IDs and unrelated custom products. No database schema change or historical activity deletion.
+- Updated price-list screen/email effective date and offline cache version.
+- Tests: 23 automated tests passed; all 1,168 price fields compared against 292 spreadsheet rows; production build passed. Isolated 412px mobile browser checked search, new price, supplier warning, item price, historical-record upgrade, refresh persistence and no runtime errors/overflow.
+- Limitations: authenticated phone/cloud round-trip requires the user's signed-in device. Prices refresh when the updated app opens; offline devices must reconnect once to obtain the new version. Supplier availability remains subject to confirmation.
+
 ## 2026-09-11 — v12: quick client entry and editable personal details
 
 - Start Visit always opens a searchable client picker, including for an empty account. Search matches name, area and contact, ignoring case and accents.
