@@ -62,6 +62,7 @@ function customerRow(item, userId) {
     contact_name: item.contact || '',
     contact_role: item.role || '',
     email: item.email || '',
+    email_follow_ups: item.emailFollowUps || [],
     phone: item.phone || '',
     last_visit: item.lastVisit || null,
     opportunity: item.opportunity || '',
@@ -320,7 +321,7 @@ export function scheduleCloudSync() {
 }
 
 function fromCustomer(row) {
-  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, phone:row.phone, lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60, listingCycleNotes:row.listing_cycle_notes||'', createdAt:row.created_at };
+  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, emailFollowUps:Array.isArray(row.email_follow_ups)?row.email_follow_ups:[], phone:row.phone, lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60, listingCycleNotes:row.listing_cycle_notes||'', createdAt:row.created_at };
 }
 
 function fromVisit(row) {

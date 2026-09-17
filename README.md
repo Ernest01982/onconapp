@@ -1,5 +1,13 @@
 # FieldFlow
 
+### Email follow-up (v15)
+
+Open a client or a visit → Email Follow-up. The configured email app opens with recipient, subject and contextual message. Choose the work sending account in Outlook, review/edit the draft and send manually. Return to FieldFlow → Mark Email as Sent to record your confirmation once. Pending confirmation is available on Today and Activity after a reload.
+
+No Outlook password or mail-service credentials are stored. No SMTP, Graph or backend sending is used. Mailto cannot force Outlook, set the From account, verify delivery or attach a PDF. Long drafts offer a full-message copy/paste fallback. Use the separate Send price-list PDF workflow for attachments.
+
+The additive email_follow_up_history migration is applied on OnconApp. It adds customers.email_follow_ups (JSONB) under existing client RLS. Apply this migration before deploying to another database.
+
 ### Sending the supplier PDF
 
 Open a client → Send price-list PDF, or Price List → Send PDF. Copy the client email if needed, tap Share PDF attachment, choose Outlook, select/paste the recipient and send there. The original complete seven-page August PDF is attached, regardless of catalogue filters. Browser/device support varies.

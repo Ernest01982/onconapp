@@ -76,4 +76,10 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   assert.equal(await cloud.syncCloudNow(),true,status.error);
   assert.equal(tables.visits.length,0);
   assert.equal(tables.customers.length,2);
+  const history=[{id:'email-1',emailMarkedSent:true,markedAt:'2026-09-17T12:00:00Z',customerId:'account-1',visitId:'visit-1',to:'buyer@example.com'}];
+  workspace.customers.find(c=>c.id==='account-1').emailFollowUps=history;
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
+  assert.deepEqual(tables.customers.find(c=>c.id==='account-1').email_follow_ups,history);
+  assert.equal(await cloud.refreshCloud(),true,status.error);
+  assert.deepEqual(workspace.customers.find(c=>c.id==='account-1').emailFollowUps,history);
 });

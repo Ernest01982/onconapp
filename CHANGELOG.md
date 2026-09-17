@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-17 — v15: email follow-up drafts
+
+- Added Email Follow-up in client, completed-visit and active-visit workflows. Uses encoded mailto only; no email API, passwords, SMTP or Microsoft authentication.
+- Drafts use current recipient, contact name, visit date, master wine names, interest, existing listings, samples left, explicit sample promises in notes, next action and current follow-up date. Private notes are not copied wholesale. Closed listing windows receive non-pushy wording; past dates are not described as future promises.
+- Missing/invalid email opens a clear validation panel with Add/edit contact email. Long mailto drafts are not silently truncated: copy the full message and open a recipient/subject-only draft.
+- Pending confirmation is device-workspace-local and survives reload. Mark Email as Sent is explicit and idempotent by draft ID, records emailMarkedSent, markedAt, contact, venue and optional visit ID. It does not create visits/tasks or mark existing tasks complete.
+- Added email history to the existing client record and Activity screen. Additive customers.email_follow_ups JSONB migration prepared; existing RLS/security policies remain unchanged. Cloud mapping and isolated round-trip test added.
+- Verification: 35 automated tests passed, production build passed, isolated 412px mobile and 1280px desktop browser workflows passed with no runtime errors, no duplicate history and no duplicate visits/tasks.
+- OnconApp resumed; email_follow_up_history migration applied and verified. Column default, size/array constraints and existing RLS confirmed. Security advisors report no new findings; the existing leaked-password-protection warning remains.
+- Limitations: actual Samsung/Outlook launch needs the user's phone. Mailto cannot choose the sending account, prove delivery or attach the price-list PDF. Existing PDF-sharing workflow remains separate. Native email draft is editable in Outlook; history records manual confirmation, not exact final email content.
+
 ## 2026-09-17 — v14: share the original price-list PDF
 
 - Added Send PDF on Price List and Send price-list PDF in client details. Shares the supplied seven-page supplier PDF unchanged, including when a product filter is active.

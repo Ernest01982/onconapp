@@ -1,3 +1,4 @@
+import { buildEmailFollowUp, followUpMailto, markEmailFollowUpSent } from './email-follow-up.js';
 import { realProducts, PRICE_LIST_DATE } from './products-data.js';
 import { PRICE_LIST_PDF_URL, PRICE_LIST_PDF_NAME, loadPriceListPdf, canSharePdf, sharePriceListPdf } from './price-list-pdf.js';
 import { initializeCloud, refreshCloud, reviewCloudDifferences, resolveCloudDifference, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
@@ -282,6 +283,7 @@ function homeView() {
   const listingNow = listingReminders.filter(item=>item.state==='open'||item.state==='due');
   return `${topbar(`Good ${now.getHours()<12?'morning':now.getHours()<18?'afternoon':'evening'}`, now.toLocaleDateString('en-ZA',{weekday:'long',day:'numeric',month:'long'}))}
   <main class="content">
+    ${data.emailFollowUpDraft?`<button class="btn btn-secondary btn-block" data-action="review-email-follow-up">Email awaiting confirmation · Review / Mark as sent</button>`:''}
     ${activeTrip ? `<section class="card driving-card"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Mileage tracking active</span></div><div class="travel-live"><div><strong data-trip-distance>${currentTripKm().toFixed(1)} km</strong><span>Distance</span></div><div><strong data-travel-timer>${duration(activeTrip.start)}</strong><span>Driving time</span></div></div><p>GPS points are saving on this device.</p><button class="btn btn-primary btn-block" data-screen="travel">Open mileage tracker</button></section>` : ''}
     ${active ? `<section class="card active-visit"><div><span class="pulse"></span><span class="eyebrow" style="color:#d9f26a">Visit in progress</span></div><div class="timer" data-timer>${duration(active.start)}</div><h2 style="margin:0 0 5px">${esc(customer(active.customerId)?.name)}</h2><p>${esc(customer(active.customerId)?.area)} · location saved</p><button class="btn btn-primary btn-block" data-screen="visit">Open visit</button></section>` : `<section class="card hero"><p class="eyebrow">Your day, made simple</p><h2>${pending.length ? `${pending.length} follow-ups. One clear plan.` : hasCustomers ? 'You’re all caught up.' : 'Add your first client.'}</h2><p>${pending.length ? `Start with ${esc(customer(pending[0].customerId)?.name)}, then keep moving.` : hasCustomers ? 'Start a visit when you arrive at your next customer.' : 'Save the venue and contact once, then every visit becomes quicker.'}</p><div class="hero-actions"><button class="btn btn-primary" data-action="start-visit">${icon('plus')} Start visit</button><button class="btn btn-white" data-screen="assistant">${icon('spark')} Ask AI</button></div></section>`}
     ${!appInstalled ? `<section class="card install-card"><div class="install-icon">${icon('download','icon-lg')}</div><div><strong>Put FieldFlow on your phone</strong><span>${isSamsungInternet?'Use Chrome for a Play Protect-safe installation.':'Install it like an app for quick access and offline capture.'}</span></div><button class="btn btn-secondary" data-action="install-app">${isSamsungInternet?'Use Chrome':deferredInstallPrompt?'Install':'Show me how'}</button></section>` : ''}
@@ -334,11 +336,12 @@ function customersView() {
 function activityView() {
   const mode = filter === 'tasks' ? 'tasks' : filter === 'cycles' ? 'cycles' : 'visits';
   const visits = [...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start)).filter(v => `${customer(v.customerId)?.name} ${v.summary} ${v.rawNote||''} ${(v.products||[]).join(' ')}`.toLowerCase().includes(query.toLowerCase()));
+  const emailEvents=data.customers.flatMap(c=>(c.emailFollowUps||[])).filter(e=>e.emailMarkedSent&&`${e.venue} ${e.to} ${e.subject}`.toLowerCase().includes(query.toLowerCase())).sort((a,b)=>new Date(b.markedAt)-new Date(a.markedAt));
   const buckets = taskBuckets(data.tasks);
   const taskSection = (title, items, tone='') => items.length ? `<div class="section-row compact"><h2>${title}</h2><span class="status ${tone}">${items.length}</span></div><div class="list">${items.map(taskCard).join('')}</div>` : '';
   const cycleItems=cycleReminders();
   return `${topbar('Activity','Your field record')}<main class="content"><div class="filter-row"><button class="filter-chip ${mode==='visits'?'active':''}" data-action="activity-mode" data-value="visits">Visits</button><button class="filter-chip ${mode==='tasks'?'active':''}" data-action="activity-mode" data-value="tasks">Follow-ups</button><button class="filter-chip ${mode==='cycles'?'active':''}" data-action="activity-mode" data-value="cycles">Listing windows</button><button class="filter-chip" data-screen="reports">Reports</button></div>
-  ${mode==='visits' ? `<div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search visits, notes or products"></div><div class="timeline">${visits.map(v=>{const c=customer(v.customerId);return `<article class="card timeline-item" data-action="visit-detail" data-id="${v.id}" tabindex="0"><span class="timeline-time">${dayLabel(v.start)} · ${time(v.start)} · ${duration(v.start,v.end)}</span><h3>${esc(c?.name)}</h3><p>${esc(v.feedbackOutcome||v.outcome||v.summary)}</p><div class="chip-wrap">${(v.wineOutcomes||[]).slice(0,3).map(item=>`<span class="status ${relationshipTone(item.outcome)}">${esc(wine(item.wineId)?.name||'Wine')} · ${esc(item.outcome)}</span>`).join('')||`<span class="status ${v.outcome?.includes('agreed')?'good':''}">${esc(v.outcome)}</span>`}</div></article>`}).join('') || emptyState('clock','No visits found','Your completed visits will appear here.')}</div>` : mode==='tasks' ? `${taskSection('Overdue',buckets.overdue,'inactive')}${taskSection('Due today',buckets.today,'hot')}${taskSection('Upcoming',buckets.upcoming)}${taskSection('Completed',buckets.completed,'good')}${!data.tasks.length?emptyState('check','No follow-ups','Add a practical next action for a client or wine.'):''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="add-task">${icon('plus')} Add follow-up</button>` : `<div class="location-state">${icon('calendar')}<span>These reminders are separate from normal follow-ups. They identify venues entering their menu or wine-list buying window.</span></div><div class="section-row"><h2>Open or approaching</h2><span class="status hot">${cycleItems.filter(item=>item.state!=='upcoming').length}</span></div><div class="list">${cycleItems.filter(item=>item.state!=='upcoming').map(listingCycleCard).join('')||emptyState('calendar','No listing windows due','Add a menu-change or listings-reopen date to a venue.')}</div><div class="section-row"><h2>Scheduled later</h2></div><div class="list">${cycleItems.filter(item=>item.state==='upcoming').map(listingCycleCard).join('')||emptyState('clock','Nothing scheduled later','Future listing windows will appear here.')}</div>`}
+  ${mode==='visits' ? `<div class="search">${icon('search')}<input id="search" value="${esc(query)}" placeholder="Search visits, notes, products or emails"></div>${data.emailFollowUpDraft?`<button class="btn btn-secondary btn-block" data-action="review-email-follow-up">Review pending email / Mark as sent</button>`:''}${emailEvents.length?`<div class="section-row"><h2>Email follow-up history</h2></div><div class="list">${emailEvents.map(emailHistoryCard).join('')}</div>`:''}<div class="timeline">${visits.map(v=>{const c=customer(v.customerId);return `<article class="card timeline-item" data-action="visit-detail" data-id="${v.id}" tabindex="0"><span class="timeline-time">${dayLabel(v.start)} · ${time(v.start)} · ${duration(v.start,v.end)}</span><h3>${esc(c?.name)}</h3><p>${esc(v.feedbackOutcome||v.outcome||v.summary)}</p><div class="chip-wrap">${(v.wineOutcomes||[]).slice(0,3).map(item=>`<span class="status ${relationshipTone(item.outcome)}">${esc(wine(item.wineId)?.name||'Wine')} · ${esc(item.outcome)}</span>`).join('')||`<span class="status ${v.outcome?.includes('agreed')?'good':''}">${esc(v.outcome)}</span>`}</div></article>`}).join('') || emptyState('clock','No visits found','Your completed visits will appear here.')}</div>` : mode==='tasks' ? `${taskSection('Overdue',buckets.overdue,'inactive')}${taskSection('Due today',buckets.today,'hot')}${taskSection('Upcoming',buckets.upcoming)}${taskSection('Completed',buckets.completed,'good')}${!data.tasks.length?emptyState('check','No follow-ups','Add a practical next action for a client or wine.'):''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="add-task">${icon('plus')} Add follow-up</button>` : `<div class="location-state">${icon('calendar')}<span>These reminders are separate from normal follow-ups. They identify venues entering their menu or wine-list buying window.</span></div><div class="section-row"><h2>Open or approaching</h2><span class="status hot">${cycleItems.filter(item=>item.state!=='upcoming').length}</span></div><div class="list">${cycleItems.filter(item=>item.state!=='upcoming').map(listingCycleCard).join('')||emptyState('calendar','No listing windows due','Add a menu-change or listings-reopen date to a venue.')}</div><div class="section-row"><h2>Scheduled later</h2></div><div class="list">${cycleItems.filter(item=>item.state==='upcoming').map(listingCycleCard).join('')||emptyState('clock','Nothing scheduled later','Future listing windows will appear here.')}</div>`}
   </main>${nav()}`;
 }
 
@@ -442,6 +445,7 @@ function visitView() {
     ${(interested.length||samples.length)?`<div class="visit-wine-summary">${interested.length?`<span><strong>Interested in</strong>${esc(interested.join(', '))}</span>`:''}${samples.length?`<span><strong>Samples left</strong>${esc(samples.join(', '))}</span>`:''}</div>`:''}
     <div class="section-row"><h2>Feedback & outcome</h2><span class="status">Required</span></div><section class="card form-card"><div class="form-group"><label>Feedback / outcome</label><select class="field" data-visit-field="feedbackOutcome">${FEEDBACK_OUTCOMES.map(outcome=>`<option ${active.feedbackOutcome===outcome?'selected':''}>${outcome}</option>`).join('')}</select></div><div class="form-group"><label>Next action</label><input class="field" data-visit-field="nextAction" maxlength="1000" value="${esc(active.nextAction||'')}" placeholder="Example: Send updated pricing"></div></section>
     <div class="section-row"><h2>Visit note</h2><span class="status">${localSaveFailed?'Not saved':'Saved on device'}</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap to add speech to your note. Tap again to stop.</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer sampled the Chardonnay and is considering a listing. Follow up Friday…">${esc(active.note||'')}</textarea>${voiceUndo?.id===active.id?'<button class="text-btn" data-action="voice-undo">Undo last voice addition</button>':''}${active.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section>
+    ${emailActionSection(active.customerId,active.id)}
     <div class="section-row"><h2>1. Follow-up reminder</h2></div><section class="card form-card"><div class="form-group"><label>Follow-up required?</label><select class="field" data-visit-field="followUpRequired"><option value="false" ${!active.followUpRequired?'selected':''}>No</option><option value="true" ${active.followUpRequired?'selected':''}>Yes</option></select></div>${active.followUpRequired?`<div class="form-grid"><div class="form-group"><label>Follow-up date *</label><input class="field" type="date" data-visit-field="followUpAt" value="${dateInput(active.followUpAt)}"></div><div class="form-group"><label>Person to contact</label><input class="field" data-visit-field="followUpContact" maxlength="120" value="${esc(active.followUpContact||contact.person||'')}"></div></div><div class="form-group"><label>Reason for follow-up *</label><input class="field" data-visit-field="followUpReason" maxlength="1000" value="${esc(active.followUpReason||'')}" placeholder="Example: Confirm tasting feedback"></div>`:''}</section>
     <details class="card visit-cycle-details"><summary>2. Menu / listing cycle — review or change</summary><section class="form-card"><p class="modal-hint">Record this even when they are not doing listings now. FieldFlow will nudge you before the opportunity reopens.</p><div class="form-grid"><div class="form-group"><label>Menu / wine-list change date</label><input class="field" type="date" data-visit-field="menuChangeDate" value="${dateInput(active.menuChangeDate)}"></div><div class="form-group"><label>Or known month</label><input class="field" type="month" data-visit-field="menuChangeMonth" value="${esc(active.menuChangeMonth||'')}"></div></div><div class="form-grid"><div class="form-group"><label>Listings reopen date</label><input class="field" type="date" data-visit-field="listingsReopenAt" value="${dateInput(active.listingsReopenAt)}"></div><div class="form-group"><label>Or reopen month</label><input class="field" type="month" data-visit-field="listingsReopenMonth" value="${esc(active.listingsReopenMonth||'')}"></div></div><div class="form-group"><label>Remind me beforehand</label><select class="field" data-visit-field="listingReminderDays">${LISTING_REMINDER_DAYS.map(days=>`<option value="${days}" ${Number(active.listingReminderDays||60)===days?'selected':''}>${days} days</option>`).join('')}</select></div></section></details>
     <button class="btn btn-primary btn-block sticky-save" style="margin-top:14px" data-action="end-visit">${icon('check')} End visit & save</button>
@@ -475,6 +479,62 @@ function structureNote(note) {
   return { summary: sentences.slice(0,2).join('. ') || 'Visit completed', products, nextAction: action, followUp, followUpLabel, outcome: outcomeSentence ? outcomeSentence.slice(0,70) : 'Visit completed', feedbackOutcome };
 }
 
+function emailHistoryCard(event) {
+  const markedDate=new Date(event.markedAt).toLocaleDateString('en-ZA',{day:'numeric',month:'short',year:'numeric'});
+  return '<article class="card info-card"><h3>Email follow-up marked as sent</h3><p class="muted-copy">'
+    +esc(markedDate+' '+time(event.markedAt))+' · '+esc(event.venue||customer(event.customerId)?.name||'Client')
+    +'</p><p>'+esc(event.to||'')+'</p><small>Manually confirmed — not delivery verified.</small></article>';
+}
+function emailHistory(customerId,visitId=null) {
+  return (customer(customerId)?.emailFollowUps||[]).filter(e=>e.emailMarkedSent&&(!visitId||e.visitId===visitId)).sort((a,b)=>new Date(b.markedAt)-new Date(a.markedAt));
+}
+function emailActionSection(customerId,visitId='') {
+  const pending=data.emailFollowUpDraft;
+  return '<div class="section-row"><h2>Email follow-up</h2></div><button class="btn btn-secondary btn-block" data-action="email-follow-up" data-customer-id="'+esc(customerId)+'" data-visit-id="'+esc(visitId)+'">'+icon('mail')+' Email Follow-up</button>'
+    +(pending?.customerId===customerId&&(!visitId||pending.visitId===visitId)?'<button class="text-btn" data-action="review-email-follow-up">Review pending email / Mark as sent</button>':'')
+    +emailHistory(customerId,visitId||null).slice(0,5).map(emailHistoryCard).join('');
+}
+
+function openEmailFollowUp(customerId,visitId='') {
+  const client=customer(customerId);
+  const visit=visitId ? data.visits.find(v=>v.id===visitId) || (data.activeVisit?.id===visitId?data.activeVisit:null)
+    : data.visits.filter(v=>v.customerId===customerId).sort((a,b)=>new Date(b.start)-new Date(a.start))[0]||null;
+  try {
+    const task=visit?.followUpTaskId?data.tasks.find(t=>t.id===visit.followUpTaskId):null;
+    const draft=buildEmailFollowUp({customer:client,visit,products:data.products,relationships:data.customerWines,profile:data.profile,task});
+    const previous=data.emailFollowUpDraft;
+    if(previous && (previous.customerId!==customerId||previous.visitId!==draft.visitId)) {
+      if(!confirm('Another email is awaiting your confirmation. Replace that pending draft? No sent history will be removed.'))return;
+    }
+    const reused=previous?.customerId===customerId&&previous?.visitId===draft.visitId;
+    data.emailFollowUpDraft={...draft,id:reused?previous.id:crypto.randomUUID(),createdAt:reused?previous.createdAt:new Date().toISOString()};
+    try{persistLocal();}catch(error){data.emailFollowUpDraft=previous;toast('Save failed. Email was not opened; please retry saving first.');return;}
+    emailFollowUpModal();
+    const url=followUpMailto(data.emailFollowUpDraft);
+    if(url.length>1900){toast('This draft is long. Copy the full message, then open your email app.');return;}
+    window.location.href=url;
+  } catch(error) {
+    modal='<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Email address needed"><div class="modal-head"><h2>Email address needed</h2><button class="close-btn" data-action="close-modal" aria-label="Close">'+icon('x')+'</button></div><p>'+esc(error.message)+'</p>'
+      +(client?'<button class="btn btn-primary btn-block" data-action="edit-customer" data-id="'+esc(client.id)+'">Add / edit contact email</button>':'')+'</section></div>';
+    render();
+  }
+}
+
+function emailFollowUpModal() {
+  const draft=data.emailFollowUpDraft;
+  if(!draft){toast('No email is awaiting confirmation.');return;}
+  const url=followUpMailto(draft),long=url.length>1900;
+  const launch=long?followUpMailto({...draft,body:''}):url;
+  modal='<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Email follow-up"><div class="modal-head"><h2>Email Follow-up</h2><button class="close-btn" data-action="close-modal" aria-label="Close">'+icon('x')+'</button></div>'
+    +'<p class="modal-hint">'+esc(draft.to)+' · '+esc(draft.venue)+'</p><p class="modal-hint">Review and send in your email app. Select ernest@namaquawines.com as the sending account in Outlook. FieldFlow cannot detect whether you pressed Send.</p>'
+    +(long?'<p role="status">This message is long. Copy the full message below and paste it into the email draft; it will open with the recipient and subject only.</p>':'')
+    +'<a class="btn btn-secondary btn-block" style="text-decoration:none" href="'+esc(launch)+'">Open email app'+(long?' (paste message)':' again')+'</a>'
+    +'<details class="history"><summary>View / copy message</summary><label for="email-follow-up-body">Draft message</label><textarea class="field" id="email-follow-up-body" readonly rows="9">'+esc(draft.body)+'</textarea><button class="text-btn" data-action="copy-follow-up-body">Copy full message</button></details>'
+    +'<p class="modal-hint">After you send it, record your own confirmation:</p><button class="btn btn-primary btn-block" data-action="mark-email-follow-up" data-id="'+esc(draft.id)+'">Mark Email as Sent</button>'
+    +'<button class="text-btn" data-action="discard-email-follow-up">I did not send it — dismiss</button></section></div>';
+  render();
+}
+
 function customerDetail(id) {
   const c=customer(id); if (!c) return;
   const visits=data.visits.filter(v=>v.customerId===id).sort((a,b)=>new Date(b.start)-new Date(a.start));
@@ -490,6 +550,7 @@ function customerDetail(id) {
     <div class="section-row"><h2>Opportunity</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>${esc(c.opportunity)}</span><strong>${currency(c.value)}</strong></div></div>
     <div class="section-row"><h2>Menu / listing cycle</h2><button class="text-btn" data-action="edit-customer" data-id="${c.id}">Edit cycle</button></div><div class="card info-card cycle-summary">${cycleTarget?`<div class="info-line" style="border:0;padding-top:0"><span>Next buying window</span><strong>${shortDate(cycleTarget)}</strong></div><div class="info-line"><span>Reminder</span><strong>${c.listingReminderDays||60} days before</strong></div>${cycleReminder?`<div class="info-line"><span>Status</span><strong class="cycle-${cycleReminder.state}">${cycleStateLabel(cycleReminder.state)}</strong></div>`:''}${c.listingCycleNotes?`<p class="muted-copy">${esc(c.listingCycleNotes)}</p>`:''}`:`<p class="muted-copy">No menu or wine-list change date saved. Add one so FieldFlow can prompt you before the next buying window.</p>`}</div>
     <div class="section-row"><h2>Wines</h2><button class="text-btn" data-action="add-customer-wine" data-id="${c.id}">${icon('plus')} Add wine</button></div><div class="listing-summary"><span class="status listed">${relations.filter(item=>item.status==='Listed').length} listed</span><span class="status pipeline">${relations.filter(item=>PIPELINE_STATUSES.includes(item.status)).length} pipeline</span></div><div class="list">${relationshipRows||emptyState('box','No wines linked','Add a wine once it is discussed, sampled or listed.')}</div>
+    ${emailActionSection(c.id)}
     <div class="section-row"><h2>Follow-up reminders</h2><button class="text-btn" data-action="add-customer-task" data-id="${c.id}">${icon('plus')} Add</button></div><div class="list">${followUps.slice(0,4).map(taskCard).join('')||emptyState('check','No follow-ups','Add a dated reason and person to contact.')}</div>
     <div class="section-row"><h2>Recent visits</h2></div><div class="list">${visits.slice(0,3).map(v=>`<button class="card list-card relation-link" data-action="visit-detail" data-id="${v.id}"><div class="dot-icon">${icon('clock')}</div><div class="list-card-main"><h3>${dayLabel(v.start)} · ${duration(v.start,v.end)}</h3><p>${esc(v.feedbackOutcome||v.summary)}</p></div>${icon('arrow')}</button>`).join('')||emptyState('clock','No visits yet','Start a visit to build the history.')}</div>
   </section></div>`;
@@ -535,6 +596,7 @@ function visitDetail(id) {
     <div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>Place</span><strong>${esc(contact.placeName||c?.name||'Visit')}</strong></div><div class="info-line"><span>Date / duration</span><strong>${shortDate(visit.start)} · ${duration(visit.start,visit.end)}</strong></div><div class="info-line"><span>Address</span><strong>${esc(contact.address||c?.address||'Not recorded')}</strong></div><div class="info-line"><span>Contact</span><strong>${esc(contact.person||c?.contact||'Not recorded')}${contact.role||c?.role?` · ${esc(contact.role||c.role)}`:''}</strong></div><div class="info-line"><span>Phone / email</span><strong>${esc(contact.phone||c?.phone||'—')} · ${esc(contact.email||c?.email||'—')}</strong></div></div>
     <div class="section-row"><h2>Feedback / outcome</h2></div><div class="card info-card"><h3>${esc(visit.feedbackOutcome||visit.outcome||'Visit completed')}</h3><p class="muted-copy">${esc(visit.summary||'No feedback note recorded.')}</p><div class="info-line"><span>Next action</span><strong>${esc(visit.nextAction||'—')}</strong></div></div>
     <div class="section-row"><h2>Wine activity</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>Current listings</span><strong>${esc(current.join(', ')||'None recorded')}</strong></div><div class="info-line"><span>Interested in</span><strong>${esc(interested.join(', ')||'None recorded')}</strong></div><div class="info-line"><span>Samples left</span><strong>${esc(samples.join(', ')||'None recorded')}</strong></div></div><div class="list">${(visit.wineOutcomes||[]).map(item=>`<div class="card list-card"><div class="dot-icon">${icon('box')}</div><div class="list-card-main"><h3>${esc(wine(item.wineId)?.name||'Wine')}</h3><p>${esc(item.outcome)}${item.sampleLeft?' · Sample left':''}</p></div></div>`).join('')||emptyState('box','No wines selected','Older visits may only have note-based product names.')}</div>
+    ${emailActionSection(visit.customerId,visit.id)}
     <div class="section-row"><h2>Follow-up reminder</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>Required</span><strong>${visit.followUpRequired?'Yes':'No'}</strong></div>${visit.followUpRequired?`<div class="info-line"><span>Date</span><strong>${dayLabel(followTask?.due||visit.followUp)}</strong></div><div class="info-line"><span>Reason</span><strong>${esc(followTask?.reason||visit.followUpReason||'—')}</strong></div><div class="info-line"><span>Person</span><strong>${esc(followTask?.contactPerson||visit.followUpContact||'—')}</strong></div><div class="info-line"><span>Completed</span><strong>${followTask?.done||visit.followUpCompleted?'Yes':'No'}</strong></div>${followTask?`<button class="btn btn-secondary btn-block btn-small" data-action="edit-task" data-id="${followTask.id}">Reschedule or edit</button>`:''}`:''}</div>
     <div class="section-row"><h2>Menu / listing cycle</h2></div><div class="card info-card">${cycleValue?`<div class="info-line" style="border:0;padding-top:0"><span>Next window</span><strong>${shortDate(cycleValue)}</strong></div><div class="info-line"><span>Reminder</span><strong>${visit.listingReminderDays||60} days before</strong></div>`:`<p class="muted-copy">No listing-cycle date recorded during this visit.</p>`}</div>
     <details class="card visit-details"><summary>Full original note</summary><p class="full-note">${esc(visit.rawNote??visit.summary??'No note recorded.')}</p>${visit.rawNote==null?'<p class="modal-hint">This older visit only retained its summary.</p>':''}</details><button class="btn btn-secondary btn-block" data-action="edit-visit" data-id="${visit.id}">Edit notes & outcome</button><button class="btn btn-ghost btn-block destructive-link" style="margin-top:14px" data-action="delete-visit" data-id="${visit.id}">Delete this visit</button></section></div>`;
@@ -822,6 +884,28 @@ document.addEventListener('click', async event => {
     data.activeVisit=null;try{save();}catch{data=before;showSaveWarning();return;}screen='home';render();toast(tasksAdded?'Visit saved and follow-up added':'Visit saved');
   }
   else if(action==='ask')ask(target.dataset.value);
+  else if(action==='email-follow-up')openEmailFollowUp(target.dataset.customerId,target.dataset.visitId);
+  else if(action==='review-email-follow-up')emailFollowUpModal();
+  else if(action==='copy-follow-up-body'){
+    const input=document.getElementById('email-follow-up-body');if(!input)return;
+    try{await navigator.clipboard.writeText(input.value);toast('Full message copied');}catch{input.focus();input.select();toast('Press and hold the selected message to copy it.');}
+  }
+  else if(action==='discard-email-follow-up'){
+    const before=data.emailFollowUpDraft;delete data.emailFollowUpDraft;
+    try{persistLocal();modal=null;render();toast('Dismissed. Nothing marked as sent.');}catch{data.emailFollowUpDraft=before;toast('Could not save. Please retry.');}
+  }
+  else if(action==='mark-email-follow-up'){
+    const draft=data.emailFollowUpDraft;
+    if(!draft||draft.id!==target.dataset.id)return;
+    if(!confirm('Have you sent this email? This records your confirmation only; FieldFlow cannot verify delivery.'))return;
+    const before=clone(data);
+    try{
+      markEmailFollowUpSent(data,draft);
+      delete data.emailFollowUpDraft;
+      save();
+      modal=null;render();toast('Email follow-up marked as sent — your confirmation recorded.');
+    }catch(error){data=before;toast(error.message||'Could not save the confirmation. Please retry.');}
+  }
   else if(action==='open-pdf-share')openPdfShare(target.dataset.id);
   else if(action==='retry-pdf')preparePdfShare();
   else if(action==='share-pdf'){

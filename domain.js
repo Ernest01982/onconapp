@@ -41,6 +41,7 @@ export function normalizeWorkspace(workspace, products = []) {
 
   normalized.customers = normalized.customers.map(customer => ({
     ...customer,
+    emailFollowUps: Array.isArray(customer.emailFollowUps) ? customer.emailFollowUps : [],
     menuChangeDate: customer.menuChangeDate || null,
     menuChangeMonth: /^\d{4}-\d{2}$/.test(customer.menuChangeMonth || '') ? customer.menuChangeMonth : '',
     listingsReopenAt: customer.listingsReopenAt || null,
