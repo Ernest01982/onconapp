@@ -8,6 +8,7 @@ import {
   importGuestWorkspace,
   migrateLegacyWorkspaceToGuest,
   readWorkspace,
+  recoveryKeyFor,
   reserveLegacyWorkspace,
   userWorkspaceKey,
   workspaceKeyFor,
@@ -43,10 +44,12 @@ test('signing out selects an empty guest workspace instead of account data', () 
   assert.deepEqual(readWorkspace(storage, userWorkspaceKey('user-a'), seed).customers, [{ id:'private-a' }]);
 });
 
-test('malformed stored data fails closed to the supplied seed', () => {
+test('malformed stored data blocks reads and writes without overwriting the original', () => {
   const storage = new MemoryStorage();
   storage.setItem(userWorkspaceKey('user-a'), '{broken');
-  assert.deepEqual(readWorkspace(storage, userWorkspaceKey('user-a'), seed), seed);
+  assert.throws(()=>readWorkspace(storage, userWorkspaceKey('user-a'), seed), /could not be read/);
+  assert.throws(()=>writeWorkspace(storage,userWorkspaceKey('user-a'),seed));
+  assert.equal(storage.getItem(userWorkspaceKey('user-a')),'{broken');
 });
 
 test('skipping import reserves the recovery copy for the selected account', () => {
@@ -68,13 +71,30 @@ test('an offline-only legacy workspace upgrades into guest mode without data los
   assert.equal(getLegacyOwner(storage), 'guest');
 });
 
-test('explicit guest import moves work into one account and clears signed-out guest data', () => {
+test('confirmed import retains original records and recovery but isolates signed-out guest data', () => {
   const storage = new MemoryStorage();
   writeWorkspace(storage, GUEST_WORKSPACE_KEY, { ...seed, customers:[{ id:'guest-client' }] });
 
-  importGuestWorkspace(storage, 'user-a', seed);
+  const original=storage.getItem(GUEST_WORKSPACE_KEY);
+  assert.throws(()=>importGuestWorkspace(storage,'user-a',seed),/backup/);
+  assert.equal(storage.getItem(userWorkspaceKey('user-a')),null);
+  importGuestWorkspace(storage, 'user-a', seed, value=>value, true);
 
   assert.deepEqual(readWorkspace(storage, userWorkspaceKey('user-a'), seed).customers, [{ id:'guest-client' }]);
-  assert.deepEqual(readWorkspace(storage, GUEST_WORKSPACE_KEY, seed).customers, []);
+  assert.equal(storage.getItem(GUEST_WORKSPACE_KEY),original);
+  assert.equal(storage.getItem(recoveryKeyFor('user-a')),original);
+  assert.deepEqual(readWorkspace(storage, workspaceKeyFor(null,storage), seed).customers, []);
   assert.throws(() => importGuestWorkspace(storage, 'user-b', seed), /another account/);
+});
+
+test('invalid collections are blocked and import failures keep the original',()=>{
+  const storage=new MemoryStorage();
+  storage.setItem(GUEST_WORKSPACE_KEY,JSON.stringify({...seed,customers:{}}));
+  assert.throws(()=>readWorkspace(storage,GUEST_WORKSPACE_KEY,seed),/could not be read/);
+  const raw=JSON.stringify({...seed,customers:[{id:'preserve'}]});storage.setItem(GUEST_WORKSPACE_KEY,raw);
+  const originalSet=storage.setItem.bind(storage);
+  storage.setItem=(key,value)=>{if(key===userWorkspaceKey('user-a'))throw new Error('Quota full');originalSet(key,value);};
+  assert.throws(()=>importGuestWorkspace(storage,'user-a',seed,value=>value,true),/Quota/);
+  assert.equal(storage.getItem(GUEST_WORKSPACE_KEY),raw);
+  assert.equal(storage.getItem(recoveryKeyFor('user-a')),raw);
 });

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-18 — v16: reliability and local recovery
+
+- Corrected client-specific assistant questions: full client names scope last visits, follow-ups, listing windows and mileage; ambiguous/unknown last-visit clients request clarification rather than returning another client's visit.
+- Notes-first active visit: removed visible speech controls, retained dormant speech implementation, and renamed the deterministic helper Organise my note. Drafts include selected master wines. Prose never auto-confirms listings or invents follow-up dates; explicit fields remain authoritative and original notes are retained.
+- Home reimbursement now sums saved trip amounts, matching Travel and Reports even after a rate change.
+- Device import requires backup download and explicit saved-file confirmation. Original guest bytes and an account-isolated recovery snapshot are retained; a separate guest storage pointer protects signed-out privacy. Original import backup can be downloaded from Profile & backup. No record IDs or CRM schemas changed.
+- Unreadable/malformed local workspaces stop startup/sync with a recovery-download screen instead of being replaced by an empty workspace. Storage quota failures leave original import data intact.
+- Cloud sync now reads all eight owned collections back and compares IDs, totals and mapped fields before showing Cloud verified and collection counts. Failed/interrupted verification restores prior merge baselines; retries do not duplicate records. Edits made during sync remain pending.
+- Verification: 40 automated tests; isolated 412px mobile and 1280px desktop workflows; correct named-client answers, negative-note handling, selected wines, rate history and persistence; malformed-storage recovery download; reopened a COPY of the supplied 12-client/19-visit backup without changing original IDs, notes, relationships, travel or email draft. Mocked browser sign-in verified cancellation, backup download, retained source, readback totals and duplicate-free retries. Cancelled imports retain auth listeners and only prompt again on explicit retry. No live CRM writes used for testing.
+- Limitations: helper remains rule-based, not a connected AI model. Browser download completion requires the user's confirmation. Recovery snapshots and unfinished email drafts remain device-only; keep external backups. Real Samsung background GPS, future notification support, reporting precision and broader accessibility work remain separate from this reliability pass.
+
 ## 2026-09-17 — v15: email follow-up drafts
 
 - Added Email Follow-up in client, completed-visit and active-visit workflows. Uses encoded mailto only; no email API, passwords, SMTP or Microsoft authentication.

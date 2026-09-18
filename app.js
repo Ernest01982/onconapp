@@ -1,3 +1,4 @@
+import { draftVisitNote, questionScope, savedReimbursement } from './reliability.js';
 import { buildEmailFollowUp, followUpMailto, markEmailFollowUpSent } from './email-follow-up.js';
 import { realProducts, PRICE_LIST_DATE } from './products-data.js';
 import { PRICE_LIST_PDF_URL, PRICE_LIST_PDF_NAME, loadPriceListPdf, canSharePdf, sharePriceListPdf } from './price-list-pdf.js';
@@ -29,7 +30,6 @@ import {
   migrateLegacyWorkspaceToGuest,
   readWorkspace,
   recordLegacyDecision,
-  reserveLegacyWorkspace,
   workspaceKeyFor,
   writeWorkspace
 } from './workspace.js';
@@ -71,10 +71,15 @@ const removeLegacyDemoData = loaded => {
   if (!cleaned.customers.length && !cleaned.visits.length && !cleaned.tasks.length) cleaned.chat = clone(seed.chat);
   return cleaned;
 };
-let activeWorkspaceKey = workspaceKeyFor(null);
-const loadState = key => normalizeWorkspace(removeLegacyDemoData(readWorkspace(localStorage, key, seed)), realProducts);
-migrateLegacyWorkspaceToGuest(localStorage, seed, removeLegacyDemoData);
-let data = loadState(activeWorkspaceKey);
+let activeWorkspaceKey = workspaceKeyFor(null, localStorage);
+let storageReadError = null;
+const loadState = key => {
+  try { return normalizeWorkspace(removeLegacyDemoData(readWorkspace(localStorage, key, seed)), realProducts); }
+  catch (error) { storageReadError = error; return clone(seed); }
+};
+try { migrateLegacyWorkspaceToGuest(localStorage, seed, removeLegacyDemoData); }
+catch (error) { storageReadError = error; }
+let data = storageReadError ? clone(seed) : loadState(activeWorkspaceKey);
 let screen = data.activeVisit ? 'visit' : 'home';
 let filter = 'All';
 let productFilter = 'All';
@@ -104,6 +109,7 @@ let voiceSession = null;
 let voiceUndo = null;
 const persistLocal = () => {
   try {
+    if(storageReadError)throw storageReadError;
     if(tabConflict)throw new Error('Another tab changed this workspace.');
     writeWorkspace(localStorage, activeWorkspaceKey, data);
     localSaveFailed = false;
@@ -122,6 +128,7 @@ function showSaveWarning() {
   document.body.append(warning);
 }
 window.addEventListener('storage',event=>{if(event.key===activeWorkspaceKey){tabConflict=true;localSaveFailed=true;showSaveWarning();document.getElementById('save-warning').prepend('Another tab changed this workspace. Download recovery, then reload this tab. ');}});
+window.addEventListener('storage',event=>{if(event.key==='fieldflow-workspace:guest-pointer:v1' && activeWorkspaceKey.startsWith('fieldflow-workspace:guest:')){tabConflict=true;localSaveFailed=true;showSaveWarning();}});
 window.addEventListener('beforeunload',event=>{if(localSaveFailed){event.preventDefault();event.returnValue='';}});
 window.addEventListener('unhandledrejection',()=>{if(localSaveFailed)showSaveWarning();});
 const save = () => { persistLocal(); cloudDirty=true; scheduleCloudSync(); };
@@ -133,21 +140,19 @@ async function activateWorkspace(user) {
 
 function activateWorkspaceUnlocked(user) {
   const userId = user?.id || null;
-  const nextKey = workspaceKeyFor(userId);
-  const guest = loadState(workspaceKeyFor(null));
+  if (storageReadError) throw storageReadError;
+  const nextKey = workspaceKeyFor(userId, localStorage);
+  const guest = loadState(workspaceKeyFor(null, localStorage));
+  if (storageReadError) throw storageReadError;
   const guestHasWork = guest.customers.length || guest.visits.length || guest.tasks.length || guest.customerWines.length || guest.travel.trips.length || guest.activeVisit || guest.travel.activeTrip;
   if (userId && !hasWorkspace(localStorage, nextKey) && guestHasWork && !getLegacyDecision(localStorage, userId)) {
     const legacyOwner = getLegacyOwner(localStorage);
     if (!legacyOwner || legacyOwner === 'guest' || legacyOwner === userId) {
-      const accepted = window.confirm(`FieldFlow found work saved in guest mode.\n\nMove that saved work into ${user.email || 'this signed-in account'}?\n\nChoose Cancel to keep the guest work separate and start this account with an empty CRM.`);
-      if (accepted) {
-        try { importGuestWorkspace(localStorage, userId, seed, removeLegacyDemoData); }
-        catch (error) { recordLegacyDecision(localStorage, userId, 'blocked'); window.alert(error.message); }
-      }
-      else {
-        try { reserveLegacyWorkspace(localStorage, userId, 'skipped'); }
-        catch (error) { recordLegacyDecision(localStorage, userId, 'blocked'); window.alert(error.message); }
-      }
+      const accepted = window.confirm(`Import this device’s existing data into my account?\n\nAccount: ${user.email || 'this signed-in account'}\n\nA backup must be downloaded and saved first. Your original device records will be retained. Cancel pauses sign-in without replacing your workspace.`);
+      if (!accepted) throw new Error('Import paused. Your device data is unchanged. Use Sync now to retry, or sign out.');
+      downloadFile(`fieldflow-backup-${new Date().toISOString().slice(0,10)}-before-account-import.json`, JSON.stringify({format:'fieldflow-backup',version:2,exportedAt:new Date().toISOString(),workspace:guest},null,2),'application/json');
+      if (!window.confirm('Check your Downloads: is the FieldFlow JSON backup saved? Only choose OK after checking. Cancel leaves everything unchanged.')) throw new Error('Backup confirmation needed. Device records are unchanged. Use Sync now to retry.');
+      importGuestWorkspace(localStorage, userId, seed, value=>value, true);
     } else {
       recordLegacyDecision(localStorage, userId, 'owned-by-another-account');
     }
@@ -158,6 +163,7 @@ function activateWorkspaceUnlocked(user) {
   }
   activeWorkspaceKey = nextKey;
   data = loadState(activeWorkspaceKey);
+  if (storageReadError) { render(); throw storageReadError; }
   persistLocal();
   screen = data.activeVisit ? 'visit' : 'home';
   filter = 'All';
@@ -204,7 +210,7 @@ const reimbursement = km => km * (data.travel.activeTrip?.ratePerKm??data.travel
 const todayTrips = () => data.travel.trips.filter(trip => new Date(trip.start).toDateString() === currentDate().toDateString());
 const currentTripKm = () => data.travel.activeTrip ? routeDistanceKm(data.travel.activeTrip.points || []) : 0;
 const distanceLabel = km => Number.isFinite(km) ? (km < 1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`) : 'Location not pinned';
-const storageLabel = () => localSaveFailed?'Not saved':!navigator.onLine?'Working offline':cloudState.error?'Sync needs attention':cloudState.syncing?'Syncing…':cloudState.signedIn&&cloudState.lastSynced&&!cloudDirty?'Cloud backed up':'Saved on device';
+const storageLabel = () => localSaveFailed?'Not saved':!navigator.onLine?'Working offline':cloudState.error?'Sync needs attention':cloudState.syncing?'Syncing…':cloudState.signedIn&&cloudState.lastSynced&&!cloudDirty?'Cloud verified':cloudState.signedIn&&cloudDirty?'Saved locally · pending sync':'Saved on device';
 const dateInput = value => {
   if (!value) return '';
   const parsed = new Date(value);
@@ -294,7 +300,7 @@ function homeView() {
       <button class="quick-card" data-screen="activity"><span class="quick-icon">${icon('map')}</span><div><strong>${todayVisits.length} visits</strong><span>${todayVisits.reduce((sum,v)=>sum+(new Date(v.end)-new Date(v.start)),0)/60000 || 0} minutes in trade</span></div></button>
       <button class="quick-card" data-screen="products"><span class="quick-icon">${icon('tag')}</span><div><strong>Price list</strong><span>${data.products.filter(p=>p.active).length} active products</span></div></button>
       <button class="quick-card" data-screen="reports"><span class="quick-icon">${icon('chart')}</span><div><strong>Reports</strong><span>daily, weekly & monthly</span></div></button>
-      <button class="quick-card" data-screen="travel"><span class="quick-icon">${icon('pin')}</span><div><strong>${todayKm.toFixed(1)} km</strong><span>${currency(reimbursement(todayKm))} reimbursement today</span></div></button>
+      <button class="quick-card" data-screen="travel"><span class="quick-icon">${icon('pin')}</span><div><strong>${todayKm.toFixed(1)} km</strong><span>${currency(savedReimbursement(todayTrips()))} reimbursement today</span></div></button>
       <button class="quick-card" data-action="locate-customers"><span class="quick-icon">${icon('map')}</span><div><strong>Clients near me</strong><span>pinpoint the closest venue</span></div></button>
     </div>
     <div class="section-row"><h2>Next up</h2><button class="text-btn" data-screen="activity" data-filter="tasks">See all</button></div>
@@ -424,7 +430,7 @@ function reportsView() {
 }
 
 function assistantView() {
-  return `${topbar('Assistant','Your field co-pilot')}<main class="content"><section class="card assistant-hero"><div class="assistant-mark">${icon('spark','icon-lg')}</div><h2>What do you need?</h2><p>I can use your customers, visits, mileage, follow-ups and listing windows to help plan the day.</p></section><div class="suggestions">${['Who needs follow-up?','Which listing windows are approaching?','What is my mileage claim?','Who have I not visited recently?','What happened at my last visit?','What should I do today?'].map(q=>`<button class="suggestion" data-action="ask" data-value="${esc(q)}">${esc(q)}</button>`).join('')}</div><div class="chat" id="chat">${data.chat.map(m=>`<div class="bubble ${m.role}">${esc(m.text)}</div>`).join('')}</div><form class="ask-row" id="ask-form"><input class="field" id="ask-input" maxlength="1000" placeholder="Ask about your day…" autocomplete="off"><button class="btn btn-primary send-btn" aria-label="Send">${icon('send')}</button></form></main>${nav()}`;
+  return `${topbar('Assistant','Your field co-pilot')}<main class="content"><section class="card assistant-hero"><div class="assistant-mark">${icon('spark','icon-lg')}</div><h2>What do you need?</h2><p>A rule-based helper for your saved clients, visits and follow-ups. Use the full client name for a specific answer.</p></section><div class="suggestions">${['Who needs follow-up?','Which listing windows are approaching?','What is my mileage claim?','Who have I not visited recently?','What happened at my last visit?','What should I do today?'].map(q=>`<button class="suggestion" data-action="ask" data-value="${esc(q)}">${esc(q)}</button>`).join('')}</div><div class="chat" id="chat">${data.chat.map(m=>`<div class="bubble ${m.role}">${esc(m.text)}</div>`).join('')}</div><form class="ask-row" id="ask-form"><input class="field" id="ask-input" maxlength="1000" placeholder="Ask about your day…" autocomplete="off"><button class="btn btn-primary send-btn" aria-label="Send">${icon('send')}</button></form></main>${nav()}`;
 }
 
 function visitView() {
@@ -444,7 +450,7 @@ function visitView() {
     <div class="section-row"><h2>Wines presented / discussed</h2><button class="text-btn" data-action="add-visit-wine">${icon('plus')} Add wine</button></div><div class="list">${selected.map(item=>{const product=wine(item.wineId);return `<div class="card visit-wine-row"><div class="list-card-main"><strong>${esc(product?.name||'Wine')}</strong><span>${esc(product?.brand||'')}</span></div><select class="field compact-field" data-visit-wine-outcome="${item.wineId}" aria-label="Outcome for ${esc(product?.name||'wine')}">${VISIT_WINE_OUTCOMES.map(outcome=>`<option ${item.outcome===outcome?'selected':''}>${outcome}</option>`).join('')}</select><label class="sample-check"><input type="checkbox" data-visit-wine-sample="${item.wineId}" ${item.sampleLeft?'checked':''}><span>Sample left</span></label><button class="close-btn" data-action="remove-visit-wine" data-id="${item.wineId}" aria-label="Remove wine">${icon('x')}</button></div>`}).join('')||`<button class="card add-wine-empty" data-action="add-visit-wine">${icon('plus')} Select wines from the master list</button>`}</div>
     ${(interested.length||samples.length)?`<div class="visit-wine-summary">${interested.length?`<span><strong>Interested in</strong>${esc(interested.join(', '))}</span>`:''}${samples.length?`<span><strong>Samples left</strong>${esc(samples.join(', '))}</span>`:''}</div>`:''}
     <div class="section-row"><h2>Feedback & outcome</h2><span class="status">Required</span></div><section class="card form-card"><div class="form-group"><label>Feedback / outcome</label><select class="field" data-visit-field="feedbackOutcome">${FEEDBACK_OUTCOMES.map(outcome=>`<option ${active.feedbackOutcome===outcome?'selected':''}>${outcome}</option>`).join('')}</select></div><div class="form-group"><label>Next action</label><input class="field" data-visit-field="nextAction" maxlength="1000" value="${esc(active.nextAction||'')}" placeholder="Example: Send updated pricing"></div></section>
-    <div class="section-row"><h2>Visit note</h2><span class="status">${localSaveFailed?'Not saved':'Saved on device'}</span></div><section class="card note-box"><button class="voice-button" id="voice-button" data-action="voice" aria-label="Record voice note">${icon('mic','icon-lg')}</button><p class="voice-help" id="voice-help">Tap to add speech to your note. Tap again to stop.</p><label for="visit-note">What happened?</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer sampled the Chardonnay and is considering a listing. Follow up Friday…">${esc(active.note||'')}</textarea>${voiceUndo?.id===active.id?'<button class="text-btn" data-action="voice-undo">Undo last voice addition</button>':''}${active.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Structure my note</button></section>
+    <div class="section-row"><h2>Notes</h2><span class="status">${localSaveFailed?'Not saved':'Saved on device'}</span></div><section class="card note-box"><label for="visit-note">Notes</label><textarea class="field" id="visit-note" maxlength="4000" placeholder="Example: The buyer sampled the Chardonnay and is considering a listing. Follow up Friday…">${esc(active.note||'')}</textarea>${voiceUndo?.id===active.id?'<button class="text-btn" data-action="voice-undo">Undo last voice addition</button>':''}${active.note ? structuredPreview(structured) : ''}<button class="btn btn-secondary btn-block" style="margin-top:14px" data-action="structure-note">${icon('spark')} Organise my note</button></section>
     ${emailActionSection(active.customerId,active.id)}
     <div class="section-row"><h2>1. Follow-up reminder</h2></div><section class="card form-card"><div class="form-group"><label>Follow-up required?</label><select class="field" data-visit-field="followUpRequired"><option value="false" ${!active.followUpRequired?'selected':''}>No</option><option value="true" ${active.followUpRequired?'selected':''}>Yes</option></select></div>${active.followUpRequired?`<div class="form-grid"><div class="form-group"><label>Follow-up date *</label><input class="field" type="date" data-visit-field="followUpAt" value="${dateInput(active.followUpAt)}"></div><div class="form-group"><label>Person to contact</label><input class="field" data-visit-field="followUpContact" maxlength="120" value="${esc(active.followUpContact||contact.person||'')}"></div></div><div class="form-group"><label>Reason for follow-up *</label><input class="field" data-visit-field="followUpReason" maxlength="1000" value="${esc(active.followUpReason||'')}" placeholder="Example: Confirm tasting feedback"></div>`:''}</section>
     <details class="card visit-cycle-details"><summary>2. Menu / listing cycle — review or change</summary><section class="form-card"><p class="modal-hint">Record this even when they are not doing listings now. FieldFlow will nudge you before the opportunity reopens.</p><div class="form-grid"><div class="form-group"><label>Menu / wine-list change date</label><input class="field" type="date" data-visit-field="menuChangeDate" value="${dateInput(active.menuChangeDate)}"></div><div class="form-group"><label>Or known month</label><input class="field" type="month" data-visit-field="menuChangeMonth" value="${esc(active.menuChangeMonth||'')}"></div></div><div class="form-grid"><div class="form-group"><label>Listings reopen date</label><input class="field" type="date" data-visit-field="listingsReopenAt" value="${dateInput(active.listingsReopenAt)}"></div><div class="form-group"><label>Or reopen month</label><input class="field" type="month" data-visit-field="listingsReopenMonth" value="${esc(active.listingsReopenMonth||'')}"></div></div><div class="form-group"><label>Remind me beforehand</label><select class="field" data-visit-field="listingReminderDays">${LISTING_REMINDER_DAYS.map(days=>`<option value="${days}" ${Number(active.listingReminderDays||60)===days?'selected':''}>${days} days</option>`).join('')}</select></div></section></details>
@@ -453,30 +459,11 @@ function visitView() {
 }
 
 function structuredPreview(s) {
-  return `<div class="structured"><div class="structured-item"><span>Summary</span><strong>${esc(s.summary)}</strong></div><div class="structured-item"><span>Wines detected</span><strong>${esc(s.products.join(', ')||'None detected — use Add wine')}</strong></div><div class="structured-item"><span>Next action</span><strong>${esc(s.nextAction||'No action detected')}</strong></div><div class="structured-item"><span>Follow-up</span><strong>${esc(s.followUpLabel||'No date detected')}</strong></div></div>`;
+  return `<div class="structured"><div class="structured-item"><span>Summary</span><strong>${esc(s.summary)}</strong></div><div class="structured-item"><span>Selected / mentioned wines</span><strong>${esc(s.products.join(', ')||'No wines selected or mentioned')}</strong></div><div class="structured-item"><span>Next action</span><strong>${esc(s.nextAction||'No action detected')}</strong></div><div class="structured-item"><span>Follow-up</span><strong>${esc(s.followUpLabel||'No date detected')}</strong></div></div>`;
 }
 
 function structureNote(note) {
-  const clean = note.trim().replace(/\s+/g,' ');
-  const lower = clean.toLowerCase();
-  const products = data.products.filter(p=>lower.includes(p.name.toLowerCase())).map(p=>p.name);
-  const sentences = clean.split(/[.!?]+/).map(s=>s.trim()).filter(Boolean);
-  const action = sentences.find(s=>/send|call|email|drop|confirm|book|prepare|build|follow up/i.test(s)) || '';
-  let followUp = null, followUpLabel = '';
-  if (/tomorrow/i.test(clean)) { followUp=iso(1,9); followUpLabel=`Tomorrow at 09:00`; }
-  else if (/next week/i.test(clean)) { followUp=iso(7,9); followUpLabel=`${dayLabel(followUp)} at 09:00`; }
-  else if (/friday/i.test(clean)) { const d=new Date(); d.setDate(d.getDate()+((5-d.getDay()+7)%7||7)); d.setHours(9,0,0,0); followUp=d.toISOString(); followUpLabel=`Friday at 09:00`; }
-  const outcomeSentence = sentences.find(s=>/agreed|interested|requested|confirmed|declined|trial|order|listing/i.test(s));
-  const feedbackOutcome = /not doing listings|no current listing opportunity|listings? (?:are )?(?:closed|not open)/i.test(clean)
-    ? 'Not doing listings now / No current listing opportunity'
-    : /not interested|declined/i.test(clean) ? 'Not interested'
-    : /listed|placement confirmed/i.test(clean) ? 'Listed / placement confirmed'
-    : /sampled|tasted/i.test(clean) ? 'Sampled — follow-up needed'
-    : /considering/i.test(clean) ? 'Considering'
-    : /interested/i.test(clean) ? 'Positive — interested'
-    : /trial|order agreed/i.test(clean) ? 'Order / trial agreed'
-    : 'General relationship visit';
-  return { summary: sentences.slice(0,2).join('. ') || 'Visit completed', products, nextAction: action, followUp, followUpLabel, outcome: outcomeSentence ? outcomeSentence.slice(0,70) : 'Visit completed', feedbackOutcome };
+  return draftVisitNote(note, data.products, data.activeVisit || {});
 }
 
 function emailHistoryCard(event) {
@@ -666,14 +653,15 @@ async function cloudDifferencesModal(){
   modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal"><div class="modal-head"><h2>Review sync differences</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div><p class="modal-hint">Neither copy has been discarded. Choose one record at a time. A backup downloads before each choice; when finished, use Sync now.</p>${differences.map(item=>`<section class="card info-card"><h3>${esc(item.title)}</h3><details><summary>Compare record details</summary><h4>This device</h4><pre class="full-note">${esc(JSON.stringify(item.local,null,2))}</pre><h4>Cloud</h4><pre class="full-note">${esc(JSON.stringify(item.cloud,null,2))}</pre></details><div class="form-grid"><button class="btn btn-secondary" data-action="cloud-choose" data-token="${esc(item.token)}" data-choice="device">Keep device copy</button><button class="btn btn-secondary" data-action="cloud-choose" data-token="${esc(item.token)}" data-choice="cloud">Use cloud copy</button></div></section>`).join('')||'<p>No competing edits found. Sync now to load new cloud records, or check the sync error in Profile & backup.</p>'}<button class="btn btn-primary btn-block" data-action="cloud-sync">Sync now</button></section></div>`;render();
 }
 function settingsModal() {
-  const syncText = cloudState.error ? `Needs attention: ${cloudState.error}` : cloudState.syncing ? 'Syncing now…' : cloudState.lastSynced ? `Last synced ${time(cloudState.lastSynced)}` : 'Ready to sync';
+  const hasImportRecovery=cloudState.signedIn&&activeWorkspaceKey.startsWith('fieldflow-workspace:user:')&&localStorage.getItem(`${activeWorkspaceKey}:import-recovery`)!==null;
+  const syncText = cloudState.error ? `Needs attention: ${cloudState.error}` : cloudState.syncing ? 'Syncing now…' : cloudState.lastSynced ? `Last cloud readback verified ${time(cloudState.lastSynced)}` : 'Ready to sync';
   const installPanel = appInstalled ? `<div class="location-state">${icon('check')}<span>FieldFlow is installed on this device.</span></div>` : `<div class="card info-card"><h3>Install on this phone</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">${isSamsungInternet?'For this Samsung, install through Chrome to avoid the outdated package warning.':'Add FieldFlow to your Apps screen for full-screen access and safer offline use.'}</p><button class="btn btn-primary btn-block" data-action="install-app">${icon('download')} ${isSamsungInternet?'Open safely in Chrome':deferredInstallPrompt?'Install FieldFlow':'Show installation steps'}</button></div>`;
   const cloudPanel = !cloudState.configured
     ? `<div class="card info-card"><h3>Cloud backup</h3><p style="margin:0;color:var(--muted);font-size:13px;line-height:1.5">Cloud connection is not configured on this device. Local capture still works.</p></div>`
     : cloudState.signedIn
-      ? `<div class="card info-card"><h3>Cloud backup is on</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div>${cloudState.error?`<button class="btn btn-secondary btn-block" data-action="cloud-review">Review sync differences</button>`:''}<div></div></div>`
+      ? `<div class="card info-card"><h3>Cloud sync</h3><div class="info-line"><span>Signed in as</span><strong>${esc(cloudState.email)}</strong></div><div class="info-line"><span>Status</span><strong>${esc(syncText)}</strong></div><p class="modal-hint">${cloudState.pendingChanges?'New local changes are waiting for verification. ':''}${cloudState.verifiedCounts?esc(`${cloudState.verifiedCounts.customers} clients · ${cloudState.verifiedCounts.visits} visits · ${cloudState.verifiedCounts.tasks} tasks · ${cloudState.verifiedCounts.customer_wines} wine links · ${cloudState.verifiedCounts.travel_trips} trips verified.`):'No cloud readback verified this session.'} Email drafts stay on this device; keep a downloaded backup.</p><div class="form-grid" style="margin-top:12px"><button class="btn btn-secondary" data-action="cloud-sync">Sync now</button><button class="btn btn-ghost" data-action="cloud-signout">Sign out</button></div>${cloudState.error?`<button class="btn btn-secondary btn-block" data-action="cloud-review">Review sync differences</button>`:''}<div></div></div>`
       : `<form class="card info-card" id="auth-form"><h3>Back up and sync</h3><p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">Pilot access is invitation-only. Sign in with the account created for you to keep customers, visits, follow-ups, products and mileage safely synced.</p><div class="form-group"><label>Email</label><input class="field" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="you@example.com"></div><div class="form-group"><label>Password</label><input class="field" name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="Your password"></div><button class="btn btn-primary btn-block" type="submit">Sign in</button>${cloudState.error?`<p class="form-error">${esc(cloudState.error)}</p>`:''}</form>`;
-  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><button class="btn btn-secondary btn-block" data-action="edit-profile">Edit my details</button><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>${localSaveFailed?'Needs attention':'Available on this device'}</strong></div><div class="info-line"><span>KM rate</span><strong>${currency(data.travel.ratePerKm)}/km</strong></div></div>${cloudPanel}<div class="card info-card"><h3>Device backup</h3><p class="muted-copy">Download a complete copy before changing phones or clearing browser data.</p><div class="form-grid"><button class="btn btn-secondary" data-action="export-backup">${icon('download')} Export</button><button class="btn btn-ghost" data-action="import-backup">Import</button></div><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block destructive-link" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
+  modal=`<div class="modal-backdrop" data-modal="settings" data-action="close-modal"><section class="modal"><div class="handle"></div><div class="modal-head"><h2>Profile & backup</h2><button class="close-btn" data-action="close-modal">${icon('x')}</button></div>${installPanel}<div class="card info-card"><h3>${esc(data.profile.name)}</h3><button class="btn btn-secondary btn-block" data-action="edit-profile">Edit my details</button><div class="info-line"><span>Territory</span><strong>${esc(data.profile.territory)}</strong></div><div class="info-line"><span>Local storage</span><strong>${localSaveFailed?'Needs attention':'Available on this device'}</strong></div><div class="info-line"><span>KM rate</span><strong>${currency(data.travel.ratePerKm)}/km</strong></div></div>${cloudPanel}<div class="card info-card"><h3>Device backup</h3><p class="muted-copy">Download a complete copy before changing phones or clearing browser data.</p><div class="form-grid"><button class="btn btn-secondary" data-action="export-backup">${icon('download')} Export</button><button class="btn btn-ghost" data-action="import-backup">Import</button></div>${hasImportRecovery?'<button class="btn btn-secondary btn-block" data-action="export-import-recovery">Download original import backup</button>':''}<input id="backup-file" type="file" accept="application/json,.json" hidden></div><p style="color:var(--muted);font-size:13px;line-height:1.5">Field work saves to this device first. When signed in, it syncs securely as soon as a connection is available.</p><button class="btn btn-ghost btn-block destructive-link" data-action="clear-crm-data">${icon('refresh')} Clear my CRM data</button></section></div>`; render();
 }
 
 function installHelpModal() {
@@ -689,6 +677,10 @@ function installHelpModal() {
 function emptyState(ic,title,text){return `<div class="card empty"><div class="dot-icon">${icon(ic)}</div><h3>${esc(title)}</h3><p>${esc(text)}</p></div>`;}
 
 function render() {
+  if (storageReadError) {
+    document.getElementById('app').innerHTML='<main class="content"><section class="card form-card" role="alert"><h1>Device data needs recovery</h1><p>FieldFlow could not read this workspace. Your saved bytes have not been replaced, and sync is paused. Do not clear browser data or reinstall.</p><button class="btn btn-primary" data-action="export-backup">Download original recovery file</button><p>Keep that file and your last working backup, then ask for help restoring the workspace.</p></section></main>';
+    return;
+  }
   stopVoiceCapture();
   const pdfClient=document.getElementById('pdf-client')?.value;
   const cycleOpen=document.querySelector('.visit-cycle-details')?.open;
@@ -711,14 +703,16 @@ function render() {
 }
 
 function answerQuestion(q) {
-  const lower=q.toLowerCase(); const pending=data.tasks.filter(t=>!t.done).sort((a,b)=>new Date(a.due)-new Date(b.due));const windows=cycleReminders(),priorityWindows=windows.filter(item=>item.state!=='upcoming');
-  if (/mileage|kilomet|travel|reimburse|claim/.test(lower)) { const weekTrips=data.travel.trips.filter(t=>new Date(t.start)>new Date(Date.now()-7*DAY));const km=weekTrips.reduce((sum,t)=>sum+Number(t.distanceKm||0),0),claim=weekTrips.reduce((sum,t)=>sum+Number(t.reimbursement||0),0);return `Your last 7 days total ${km.toFixed(1)} km across ${weekTrips.length} trips. The saved reimbursement is ${currency(claim)}.`; }
+  const scope=questionScope(q,data.customers);if(scope.clarification)return scope.clarification;
+  const scopedCustomers=scope.customer?[scope.customer]:data.customers;
+  const lower=q.toLowerCase(); const pending=data.tasks.filter(t=>!t.done&&(!scope.customer||t.customerId===scope.customer.id)).sort((a,b)=>new Date(a.due)-new Date(b.due));const windows=cycleReminders().filter(w=>!scope.customer||w.customerId===scope.customer.id),priorityWindows=windows.filter(item=>item.state!=='upcoming');
+  if (/mileage|kilomet|travel|reimburse|claim/.test(lower)) { const weekTrips=data.travel.trips.filter(t=>(!scope.customer||t.customerId===scope.customer.id)&&new Date(t.start)>new Date(Date.now()-7*DAY));const km=weekTrips.reduce((sum,t)=>sum+Number(t.distanceKm||0),0),claim=weekTrips.reduce((sum,t)=>sum+Number(t.reimbursement||0),0);return `Your last 7 days total ${km.toFixed(1)} km across ${weekTrips.length} trips. The saved reimbursement is ${currency(claim)}.`; }
   if (/menu|listing window|buying window|reopen/.test(lower)) { const first=priorityWindows[0]||windows[0];return first?`${priorityWindows.length} venues are in or approaching a listing window. Start with ${customer(first.customerId)?.name}; its target is ${dayLabel(first.targetAt)} and the reminder is set for ${first.leadDays} days beforehand.`:'No listing windows are scheduled yet. Add a menu-change month or listings-reopen date to a venue.'; }
   if (/follow.?up|due|overdue/.test(lower)) { const first=pending[0],product=wine(first?.wineId);return pending.length ? `You have ${pending.length} open follow-ups. Start with ${customer(first.customerId)?.name}${product?` about ${product.name}`:''}: ${first.title.toLowerCase()} (${dayLabel(first.due)}).` : 'You have no open follow-ups.'; }
-  if (/not visited|recently|neglect/.test(lower)) { const sorted=[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit)); if(!sorted.length)return 'Add your first client and I will track who has not been visited.'; return sorted.length===1?`${sorted[0].name} has ${sorted[0].lastVisit?`not been visited since ${dayLabel(sorted[0].lastVisit)}`:'not been visited yet'}.`:`${sorted[0].name} needs a visit most — last seen ${dayLabel(sorted[0].lastVisit)}. ${sorted[1].name} is next.`; }
-  if (/today|prioriti|plan|do next/.test(lower)) { if(!data.customers.length)return 'Start by adding your first client. Then I can build your daily visit and follow-up plan.';const window=priorityWindows[0];if(window)return `Today: 1) Contact ${customer(window.customerId)?.name} because its listing window is ${window.state==='open'?'open':`approaching on ${dayLabel(window.targetAt)}`}. 2) ${pending.length?`${pending[0].title} for ${customer(pending[0].customerId)?.name}`:'Visit the account not seen for the longest'}. 3) Record the outcome and next date.`;return pending.length ? `Today: 1) ${pending[0].title} for ${customer(pending[0].customerId)?.name}. 2) Visit ${[...data.customers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit))[0].name}. 3) Clear any new notes before you finish.` : 'Your follow-ups are clear. Prioritise the customer with the oldest visit date.'; }
-  if (/last visit|what happened/.test(lower)) { const visit=[...data.visits].sort((a,b)=>new Date(b.start)-new Date(a.start))[0]; return visit?`Your last visit was to ${customer(visit.customerId)?.name||'a client'} on ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction||'None recorded'}.`:'You have no recorded visits yet.'; }
-  const named=data.customers.find(c=>lower.includes(c.name.toLowerCase())||lower.includes(c.name.split(' ')[0].toLowerCase()));
+  if (/not visited|recently|neglect/.test(lower)) { const sorted=[...scopedCustomers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit)); if(!sorted.length)return 'Add your first client and I will track who has not been visited.'; return sorted.length===1?`${sorted[0].name} has ${sorted[0].lastVisit?`not been visited since ${dayLabel(sorted[0].lastVisit)}`:'not been visited yet'}.`:`${sorted[0].name} needs a visit most — last seen ${dayLabel(sorted[0].lastVisit)}. ${sorted[1].name} is next.`; }
+  if (/today|prioriti|plan|do next/.test(lower)) { if(!data.customers.length)return 'Start by adding your first client. Then I can build your daily visit and follow-up plan.';const window=priorityWindows[0];if(window)return `Today: 1) Contact ${customer(window.customerId)?.name} because its listing window is ${window.state==='open'?'open':`approaching on ${dayLabel(window.targetAt)}`}. 2) ${pending.length?`${pending[0].title} for ${customer(pending[0].customerId)?.name}`:'Visit the account not seen for the longest'}. 3) Record the outcome and next date.`;return pending.length ? `Today: 1) ${pending[0].title} for ${customer(pending[0].customerId)?.name}. 2) Visit ${[...scopedCustomers].sort((a,b)=>new Date(a.lastVisit)-new Date(b.lastVisit))[0].name}. 3) Clear any new notes before you finish.` : 'Your follow-ups are clear. Prioritise the customer with the oldest visit date.'; }
+  if (/last visit|what happened/.test(lower)) { const visit=data.visits.filter(v=>!scope.customer||v.customerId===scope.customer.id).sort((a,b)=>new Date(b.start)-new Date(a.start))[0]; return visit?`${scope.customer?'The last recorded visit':'Your last visit'} was to ${customer(visit.customerId)?.name||'a client'} on ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction||'None recorded'}.`:scope.customer?`${scope.customer.name} has no recorded visits yet.`:'You have no recorded visits yet.'; }
+  const named=scope.customer;
   if (named) { const visit=data.visits.filter(v=>v.customerId===named.id).sort((a,b)=>new Date(b.start)-new Date(a.start))[0],listings=winesForCustomer(named.id).filter(item=>item.status==='Listed').map(item=>wine(item.wineId)?.name).filter(Boolean); return visit ? `Last visit to ${named.name} was ${dayLabel(visit.start)}: ${visit.summary} Next action: ${visit.nextAction||'None recorded'}. Current listings: ${listings.join(', ')||'none recorded'}.` : `${named.name} has no recorded visits yet. Current listings: ${listings.join(', ')||'none recorded'}.`; }
   const namedWine=data.products.find(product=>lower.includes(product.name.toLowerCase()));
   if(namedWine&&/where|listed|interest|pipeline/.test(lower)){const listed=customersForWine(namedWine.id).filter(item=>item.status==='Listed').map(item=>customer(item.customerId)?.name).filter(Boolean),pipeline=customersForWine(namedWine.id).filter(item=>PIPELINE_STATUSES.includes(item.status)).map(item=>customer(item.customerId)?.name).filter(Boolean);return `${namedWine.name} is listed at ${listed.join(', ')||'no restaurants yet'}. Pipeline: ${pipeline.join(', ')||'none recorded'}.`;}
@@ -798,6 +792,12 @@ function downloadFile(filename, content, type) {
 }
 
 function exportBackup(suffix = '') {
+  if (storageReadError) {
+    const raw=localStorage.getItem(storageReadError.workspaceKey || activeWorkspaceKey);
+    if (raw === null) { toast('Storage is unavailable. Do not clear browser data; ask for recovery help.'); return; }
+    downloadFile('fieldflow-unreadable-workspace-recovery.txt',raw,'text/plain');
+    return;
+  }
   const stamp=currentDate().toISOString().slice(0,10);
   downloadFile(`fieldflow-backup-${stamp}${suffix?`-${suffix}`:''}.json`,JSON.stringify({format:'fieldflow-backup',version:2,exportedAt:new Date().toISOString(),workspace:data},null,2),'application/json');
   toast('Complete FieldFlow backup downloaded');
@@ -874,7 +874,7 @@ document.addEventListener('click', async event => {
   else if(action==='voice-undo'){stopVoiceCapture();if(voiceUndo?.id===data.activeVisit?.id){data.activeVisit.note=voiceUndo.note;voiceUndo=null;save();render();}}
   else if(action==='edit-visit')editVisitModal(target.dataset.id);
   else if(action==='voice')startVoiceCapture();
-  else if(action==='structure-note'){const box=document.getElementById('visit-note');data.activeVisit.note=box.value;const structured=structureNote(box.value);for(const name of structured.products){const product=data.products.find(item=>item.name===name);if(product&&!data.activeVisit.wineOutcomes.some(item=>item.wineId===product.id))data.activeVisit.wineOutcomes.push({wineId:product.id,outcome:'Discussed',sampleLeft:false});}if(!data.activeVisit.nextAction)data.activeVisit.nextAction=structured.nextAction||'';if(data.activeVisit.feedbackOutcome==='General relationship visit')data.activeVisit.feedbackOutcome=structured.feedbackOutcome;if(structured.followUp&&!data.activeVisit.followUpRequired){data.activeVisit.followUpRequired=true;data.activeVisit.followUpAt=dateInput(structured.followUp);data.activeVisit.followUpReason=structured.nextAction||'Follow up after visit';}save();render();toast('Note structured — check the suggested fields');}
+  else if(action==='structure-note'){const box=document.getElementById('visit-note');data.activeVisit.note=box.value;const structured=structureNote(box.value);for(const name of structured.products){const product=data.products.find(item=>item.name===name);if(product&&!data.activeVisit.wineOutcomes.some(item=>item.wineId===product.id))data.activeVisit.wineOutcomes.push({wineId:product.id,outcome:'Discussed',sampleLeft:false});}if(!data.activeVisit.nextAction)data.activeVisit.nextAction=structured.nextAction||'';if(data.activeVisit.feedbackOutcome==='General relationship visit')data.activeVisit.feedbackOutcome=structured.feedbackOutcome;if(structured.followUp&&!data.activeVisit.followUpRequired){data.activeVisit.followUpRequired=true;data.activeVisit.followUpAt=dateInput(structured.followUp);data.activeVisit.followUpReason=structured.nextAction||'Follow up after visit';}save();render();toast('Rule-based draft ready — review it before saving');}
   else if(action==='end-visit'){
     stopVoiceCapture(); const before=clone(data); const note=document.getElementById('visit-note')?.value??data.activeVisit.note??''; const s=structureNote(note); const active=data.activeVisit; const c=customer(active.customerId);
     const isClosed=active.feedbackOutcome==='Not doing listings now / No current listing opportunity';if(isClosed&&!active.listingsReopenAt&&!active.listingsReopenMonth&&!active.menuChangeDate&&!active.menuChangeMonth){const cycle=document.querySelector('.visit-cycle-details');if(cycle){cycle.open=true;cycle.scrollIntoView({block:'center'});}toast('Add when listings reopen, or the menu-change date/month.');return;}if(active.followUpRequired&&(!active.followUpAt||!active.followUpReason)){toast('Add the follow-up date and reason, or choose No.');return;}
@@ -934,6 +934,12 @@ document.addEventListener('click', async event => {
   else if(action==='print-km')window.print();
   else if(action==='share-report')emailReport();
   else if(action==='export-backup')exportBackup();
+  else if(action==='export-import-recovery'){
+    if(!cloudState.signedIn||!activeWorkspaceKey.startsWith('fieldflow-workspace:user:'))return;
+    const raw=localStorage.getItem(`${activeWorkspaceKey}:import-recovery`);if(!raw)return;
+    downloadFile('fieldflow-original-import-backup.json',JSON.stringify({format:'fieldflow-backup',version:2,exportedAt:new Date().toISOString(),workspace:JSON.parse(raw)},null,2),'application/json');
+    toast('Original import backup requested. Check your Downloads.');
+  }
   else if(action==='import-backup')document.getElementById('backup-file')?.click();
   else if(action==='cloud-sync'){target.disabled=true;const synced=await refreshCloud();settingsModal();toast(synced?'Cloud backup is up to date':'Sync needs attention — check your connection and status');}
   else if(action==='cloud-review'){try{await cloudDifferencesModal();}catch(error){toast(error.message);}}
@@ -999,7 +1005,7 @@ document.addEventListener('submit', async event => {
   if(event.target.id==='edit-visit-form'){
     const visit=data.visits.find(item=>item.id===event.target.dataset.id);if(!visit)return;
     const before=clone(visit),fd=new FormData(event.target);
-    visit.rawNote=String(fd.get('rawNote')||'');visit.summary=structureNote(visit.rawNote).summary;
+    visit.rawNote=String(fd.get('rawNote')||'');visit.summary=draftVisitNote(visit.rawNote,data.products,visit).summary;
     visit.feedbackOutcome=String(fd.get('feedbackOutcome'));visit.nextAction=String(fd.get('nextAction')||'');
     try{save();}catch{Object.assign(visit,before);return;}
     visitDetail(visit.id);toast('Visit corrections saved');
@@ -1164,8 +1170,8 @@ initializeCloud({
   getData:()=>data,
   setData:remote=>{data=normalizeWorkspace({...data,...remote},realProducts);persistLocal();screen=data.activeVisit?'visit':'home';modal=null;render();toast('Cloud data is ready on this device.');},
   onIdentityChange:user=>activateWorkspace(user),
-  onStatus:next=>{if(next.lastSynced&&next.lastSynced!==cloudState.lastSynced&&!next.error)cloudDirty=false;cloudState=next;if((screen==='home'&&!modal)||modal?.includes('data-modal="settings"'))render();}
-});
+  onStatus:next=>{if(next.pendingChanges)cloudDirty=true;if(next.lastSynced&&next.lastSynced!==cloudState.lastSynced&&!next.error&&!next.pendingChanges)cloudDirty=false;cloudState=next;if((screen==='home'&&!modal)||modal?.includes('data-modal="settings"'))render();}
+}).catch(error=>{render();toast(error.message||'Sync paused. Your local data is kept.');});
 
 
 let startingVisit=false;

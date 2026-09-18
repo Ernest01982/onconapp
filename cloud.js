@@ -25,6 +25,8 @@ let handledUserId = null;
 let activeUserId;
 let identityGeneration = 0;
 let identityReady = false;
+let verifiedCounts = null;
+let verifiedSnapshot = null;
 let sessionChangeChain = Promise.resolve();
 
 class StaleIdentityError extends Error {}
@@ -42,6 +44,8 @@ function status() {
     email: session?.user?.email || '',
     syncing,
     lastSynced,
+    verifiedCounts,
+    pendingChanges: Boolean(identityReady && session?.user && verifiedSnapshot && fingerprint(allLocalRows(getLocalData(),session.user.id)) !== verifiedSnapshot),
     error: lastError
   };
 }
@@ -274,8 +278,11 @@ export async function syncCloudNow(force = false) {
   if(!cloudLoaded){await loadRemoteOrSeed();return cloudLoaded&&!lastError?syncCloudNow():false;}
   syncing = true;
   notify({ error: '' });
+  const baselineBefore = JSON.parse(JSON.stringify(getLocalData()._syncBase || {}));
   try {
     assertCurrentIdentity(userId, generation);
+    getLocalData()._syncPendingBase = baselineBefore;
+    checkpoint();
     const profile = {
       user_id: userId,
       display_name: data.profile?.name || '',
@@ -300,12 +307,34 @@ export async function syncCloudNow(force = false) {
     };
     await syncRows('app_state',[appState],userId,force,generation);
 
+    // A write acknowledgement is not a verified backup. Read every owned collection back.
+    const expected = {...tables, profiles:[profile], app_state:[appState]};
+    const counts = {};
+    for (const [table, rows] of Object.entries(expected)) {
+      const remote = (await readRows(table,userId)).data;
+      assertCurrentIdentity(userId,generation);
+      const key = table==='profiles'||table==='app_state'?'user_id':'id';
+      const byId = new Map(remote.map(row=>[row[key],row]));
+      if (remote.length!==rows.length || byId.size!==rows.length || rows.some(row=>!byId.has(row[key]) || fingerprint(row)!==fingerprint(mappers[table](byId.get(row[key]))))) {
+        throw new Error(`Cloud verification failed for ${table}. Your complete device workspace and import recovery copy are kept. Export a backup, then use Sync now to retry or review differences.`);
+      }
+      counts[table]=rows.length;
+    }
+    delete getLocalData()._syncPendingBase;
+    checkpoint();
+    verifiedCounts=counts;
+    verifiedSnapshot=fingerprint(allLocalRows(data,userId));
     lastSynced = new Date().toISOString();
     const latest={...getLocalData(),_syncBase:null},snapshot={...data,_syncBase:null};
     if(fingerprint(latest)!==fingerprint(snapshot))scheduleCloudSync();
     return true;
   } catch (error) {
-    if (error instanceof StaleIdentityError) return false;
+    if (error instanceof StaleIdentityError || activeUserId!==userId || identityGeneration!==generation) return false;
+    // A failed readback must not teach the next merge that an unverified upload
+    // is safely in the cloud (and then interpret its absence as a deletion).
+    getLocalData()._syncBase = baselineBefore;
+    delete getLocalData()._syncPendingBase;
+    try { checkpoint(); } catch { /* The in-memory copy is still retained. */ }
     lastError = error?.message || 'Cloud sync failed';
     return false;
   } finally {
@@ -351,6 +380,13 @@ async function loadRemoteOrSeed() {
   syncing = true;
   notify({ error: '' });
   try {
+    assertCurrentIdentity(userId,generation);
+    const interrupted=getLocalData();
+    if (interrupted._syncPendingBase) {
+      interrupted._syncBase=interrupted._syncPendingBase;
+      delete interrupted._syncPendingBase;
+      checkpoint();
+    }
     const profileResult = await client.from('profiles').select('*').eq('user_id', userId).maybeSingle();
     if (profileResult.error) throw profileResult.error;
     assertCurrentIdentity(userId, generation);
@@ -439,10 +475,10 @@ async function loadRemoteOrSeed() {
   }
 }
 
-async function handleSession(nextSession) {
+async function handleSession(nextSession, retry = false) {
   const nextUserId = nextSession?.user?.id || null;
   session = nextSession;
-  if (activeUserId !== nextUserId) {
+  if (activeUserId !== nextUserId || (!identityReady && retry)) {
     identityReady = false;
     cloudLoaded = false;
     clearTimeout(syncTimer);
@@ -450,11 +486,14 @@ async function handleSession(nextSession) {
     handledUserId = null;
     pendingDifferences.clear();
     lastSynced = null;
+    verifiedCounts = null;
+    verifiedSnapshot = null;
     activeUserId = nextUserId;
     identityGeneration += 1;
     await onIdentityChange(session?.user || null);
     identityReady = true;
   }
+  if (!identityReady) { notify(); return; }
   notify({ error: '' });
   if (!session?.user) {
     return;
@@ -465,9 +504,9 @@ async function handleSession(nextSession) {
   if(cloudLoaded&&!lastError)scheduleCloudSync();
 }
 
-function queueSessionChange(nextSession) {
+function queueSessionChange(nextSession, retry = false) {
   sessionChangeChain = sessionChangeChain
-    .then(() => handleSession(nextSession))
+    .then(() => handleSession(nextSession, retry))
     .catch(error => notify({ error:error?.message || 'Could not change cloud account' }));
   return sessionChangeChain;
 }
@@ -486,7 +525,8 @@ export async function initializeCloud(options) {
 
   const { data, error } = await client.auth.getSession();
   if (error) notify({ error:error.message });
-  await handleSession(data?.session || null);
+  // Keep auth listeners usable even if the user pauses the initial device import.
+  await queueSessionChange(data?.session || null);
   client.auth.onAuthStateChange((_event, nextSession) => {
     queueMicrotask(() => queueSessionChange(nextSession));
   });
@@ -508,6 +548,7 @@ export async function signOutCloud() {
 
 export async function refreshCloud(){
   if(syncing||!navigator.onLine)return false;
+  if (!identityReady) { await queueSessionChange(session, true); return identityReady && cloudLoaded && !lastError; }
   await loadRemoteOrSeed();
   if(lastError)return false;
   return syncCloudNow();
