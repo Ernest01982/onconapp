@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-18 — v17: actionable follow-ups and Gmail handoff
+
+- Follow-up titles now open an action screen on Today, Activity and client records. Shows the reason, contact person, wine, client contact/address, linked visit's original notes and next action; clearly labels a latest-visit fallback when there is no linked visit. Other clients' visits cannot be selected.
+- Added editable message and subject, copy/share actions, reviewed email drafts, client/history access, preselected price-list PDF sharing, completion/reopening and existing rescheduling. Sharing never automatically completes a task or records an email as sent. Missing email leaves the message intact.
+- Unfinished per-follow-up messages persist in the current device workspace and backup export, scoped by task and client. They are explicitly device-only, not cloud-synced. Save failures block navigation but allow copying the message. Pending email drafts are no longer regenerated over an existing draft when reopened.
+- Email/PDF guidance now selects ernestreyneke@gmail.com in Gmail. This does not change the FieldFlow account, connect Gmail, or force the phone's default email app. Native file sharing passes the actual supplier PDF; mailto drafts have no attachment and are labelled accordingly.
+- No database migration, account changes, record deletion or live CRM test writes. Existing record IDs and relationships are unchanged.
+- Verification: 43 automated tests pass; isolated Chrome workflows at 360px, 412px and 1280px verify correct linked notes, message persistence, special characters, task context in drafts, missing-email handling, completion/reopening, rescheduling/editing, actual 443064-byte PDF handoff and no runtime exceptions. Existing email-history/idempotency regression passes on mobile/desktop. PDF cancellation, fallback, download, retry and offline tests pass against a static preview. Vite preview's development Vary headers caused an offline-cache mismatch, so offline verification used production-style static serving.
+- Limitation: Gmail's compose screen, sender selection, attachment acceptance and delivery cannot be inspected through Web Share. Automatic verified Gmail drafts still need a Google Cloud OAuth client and the user's consent; no mailbox credentials or permissions were requested or stored. No real email was sent during testing.
+
 ## 2026-09-18 — v16: reliability and local recovery
 
 - Corrected client-specific assistant questions: full client names scope last visits, follow-ups, listing windows and mileage; ambiguous/unknown last-visit clients request clarification rather than returning another client's visit.

@@ -1,5 +1,6 @@
 import { draftVisitNote, questionScope, savedReimbursement } from './reliability.js';
-import { buildEmailFollowUp, followUpMailto, markEmailFollowUpSent } from './email-follow-up.js';
+import { followUpContext, followUpMessage } from './follow-up-actions.js';
+import { buildEmailFollowUp, followUpMailto, markEmailFollowUpSent, validContactEmail } from './email-follow-up.js';
 import { realProducts, PRICE_LIST_DATE } from './products-data.js';
 import { PRICE_LIST_PDF_URL, PRICE_LIST_PDF_NAME, loadPriceListPdf, canSharePdf, sharePriceListPdf } from './price-list-pdf.js';
 import { initializeCloud, refreshCloud, reviewCloudDifferences, resolveCloudDifference, scheduleCloudSync, signInWithEmail, signOutCloud, syncCloudNow } from './cloud.js';
@@ -312,7 +313,41 @@ function homeView() {
 function taskCard(t) {
   const c = customer(t.customerId); const overdue = !t.done && new Date(t.due) < new Date(new Date().setHours(0,0,0,0));
   const product = wine(t.wineId);
-  return `<article class="card task-card ${t.done?'done':''}"><button class="check ${t.done?'done':''}" data-action="toggle-task" data-id="${t.id}" aria-label="${t.done?'Reopen':'Complete'} follow-up">${t.done?icon('check'):''}</button><div class="list-card-main"><h3>${esc(t.title)}</h3><p>${esc(c?.name||'Client')} ${product?`· ${esc(product.name)}`:''}${t.contactPerson?` · ${esc(t.contactPerson)}`:''}<br>${esc(t.reason||'Follow-up')} · ${dayLabel(t.due)} at ${time(t.due)}</p></div><div class="task-actions"><div class="date-chip ${overdue?'overdue':''}">${t.done?'Completed':overdue?'Overdue':dayLabel(t.due)}</div><button class="mini-btn" data-action="edit-task" data-id="${t.id}" aria-label="Reschedule or edit follow-up">${t.done?'Edit':'Reschedule'}</button></div></article>`;
+  return `<article class="card task-card ${t.done?'done':''}"><button class="check ${t.done?'done':''}" data-action="toggle-task" data-id="${esc(t.id)}" aria-label="${t.done?'Reopen':'Complete'} follow-up">${t.done?icon('check'):''}</button><div class="list-card-main"><button class="task-open" data-action="open-task" data-id="${esc(t.id)}" aria-label="Open follow-up: ${esc(t.title)}"><strong>${esc(t.title)}</strong><span>${esc(c?.name||'Client')} ${product?`· ${esc(product.name)}`:''}${t.contactPerson?` · ${esc(t.contactPerson)}`:''}<br>${esc(t.reason||'Follow-up')} · ${dayLabel(t.due)} at ${time(t.due)}</span><small>Open details &amp; message →</small></button></div><div class="task-actions"><div class="date-chip ${overdue?'overdue':''}">${t.done?'Completed':overdue?'Overdue':dayLabel(t.due)}</div><button class="mini-btn" data-action="edit-task" data-id="${esc(t.id)}" aria-label="Reschedule or edit follow-up">${t.done?'Edit':'Reschedule'}</button></div></article>`;
+}
+
+function followUpDetail(id) {
+  const context=followUpContext(data,id);if(!context){toast('This follow-up is no longer available.');return;}
+  const {task:t,customer:c,visit:v,wine:p,linked}=context;
+  const draft=followUpMessage(data,context);
+  const notes=v?.rawNote??v?.note??v?.summary??'';
+  modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal follow-up-detail" data-task-id="${esc(t.id)}" role="dialog" aria-modal="true" aria-label="Follow-up details">
+    <div class="modal-head"><h2>Follow-up</h2><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div>
+    <span class="status ${t.done?'good':'hot'}">${t.done?'Completed':'Due '+dayLabel(t.due)}</span><h3>${esc(t.title)}</h3>
+    <p><strong>Reason:</strong> ${esc(t.reason||'Not recorded')}<br><strong>Person to contact:</strong> ${esc(t.contactPerson||c?.contact||'Not recorded')}</p>
+    ${p?`<p><strong>Wine:</strong> ${esc(p.name)}</p>`:''}
+    <div class="customer-actions"><button class="btn btn-secondary" data-action="edit-task" data-id="${esc(t.id)}">Edit / reschedule</button><button class="btn btn-secondary" data-action="toggle-task" data-id="${esc(t.id)}">${t.done?'Reopen follow-up':'Complete follow-up'}</button></div>
+    <h3>${esc(c?.name||'Client no longer available')}</h3><p class="contact-info">${esc(c?.contact||'No contact saved')}${c?.role?' · '+esc(c.role):''}<br>${esc(c?.address||c?.area||'No address saved')}<br>${esc(c?.phone||'No phone saved')}<br>${esc(c?.email||'No email saved')}</p>
+    ${c?`<div class="customer-actions"><button class="btn btn-secondary" data-action="customer" data-id="${esc(c.id)}">Client details &amp; history</button><button class="btn btn-secondary" data-action="open-pdf-share" data-id="${esc(c.id)}" data-task-id="${esc(t.id)}">Send price-list PDF</button></div>`:''}
+    <h3>${linked?'Linked visit':'Latest client visit'}</h3>
+    ${v?`<p>${dayLabel(v.start)} · ${esc(v.feedbackOutcome||v.outcome||'Visit recorded')}</p><div class="follow-up-notes">${esc(notes||'No notes recorded.')}</div>${v.nextAction?`<p><strong>Visit next action:</strong> ${esc(v.nextAction)}</p>`:''}<button class="text-btn" data-action="visit-detail" data-id="${esc(v.id)}">Open full visit</button>`:'<p>No visit recorded yet. You can still follow up.</p>'}
+    <h3>Write a message</h3><p class="modal-hint">Private notes stay above, not in the message. Review before sharing. Your unfinished message is saved on this device only.</p>
+    <label for="task-message-subject">Email subject</label><input class="field" id="task-message-subject" maxlength="256" value="${esc(draft.subject)}">
+    <label for="task-message-body">Message</label><textarea class="field" id="task-message-body" rows="7" maxlength="20000">${esc(draft.body)}</textarea><p id="task-message-status" class="modal-hint" role="status"></p>
+    <div class="customer-actions"><button class="btn btn-secondary" data-action="copy-task-message">Copy message</button><button class="btn btn-secondary" data-action="share-task-message">Share message</button></div>
+    ${c?`<button class="btn btn-primary btn-block" data-action="email-task-message" data-id="${esc(t.id)}">Review email draft</button>`:''}
+    <p class="modal-hint">In Gmail, select ernestreyneke@gmail.com as the sender. Sharing or opening a draft does not complete this follow-up. Emails here have no PDF attachment; use Send price-list PDF above to share the actual file.</p>
+  </section></div>`;render();
+}
+
+function saveTaskMessage() {
+  const panel=document.querySelector('.follow-up-detail');if(!panel)return null;
+  const context=followUpContext(data,panel.dataset.taskId);if(!context)return null;
+  const draft={taskId:context.task.id,customerId:context.task.customerId,subject:document.getElementById('task-message-subject').value,body:document.getElementById('task-message-body').value};
+  const previous=data.followUpMessageDrafts;
+  data.followUpMessageDrafts=[...(previous||[]).filter(item=>item.taskId!==draft.taskId),draft];
+  try{persistLocal();document.getElementById('task-message-status').textContent='Draft saved on this device.';document.getElementById('task-message-subject').setAttribute('value',draft.subject);document.getElementById('task-message-body').textContent=draft.body;modal=panel.parentElement.outerHTML;return draft;}
+  catch{data.followUpMessageDrafts=previous;document.getElementById('task-message-status').textContent='Could not save. Keep this screen open and copy your message before leaving.';return null;}
 }
 
 function listingCycleCard(reminder) {
@@ -494,7 +529,7 @@ function openEmailFollowUp(customerId,visitId='') {
       if(!confirm('Another email is awaiting your confirmation. Replace that pending draft? No sent history will be removed.'))return;
     }
     const reused=previous?.customerId===customerId&&previous?.visitId===draft.visitId;
-    data.emailFollowUpDraft={...draft,id:reused?previous.id:crypto.randomUUID(),createdAt:reused?previous.createdAt:new Date().toISOString()};
+    data.emailFollowUpDraft=reused?previous:{...draft,id:crypto.randomUUID(),createdAt:new Date().toISOString()};
     try{persistLocal();}catch(error){data.emailFollowUpDraft=previous;toast('Save failed. Email was not opened; please retry saving first.');return;}
     emailFollowUpModal();
     const url=followUpMailto(data.emailFollowUpDraft);
@@ -513,7 +548,8 @@ function emailFollowUpModal() {
   const url=followUpMailto(draft),long=url.length>1900;
   const launch=long?followUpMailto({...draft,body:''}):url;
   modal='<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Email follow-up"><div class="modal-head"><h2>Email Follow-up</h2><button class="close-btn" data-action="close-modal" aria-label="Close">'+icon('x')+'</button></div>'
-    +'<p class="modal-hint">'+esc(draft.to)+' · '+esc(draft.venue)+'</p><p class="modal-hint">Review and send in your email app. Select ernest@namaquawines.com as the sending account in Outlook. FieldFlow cannot detect whether you pressed Send.</p>'
+    +(draft.taskId?'<button class="text-btn" data-action="open-task" data-id="'+esc(draft.taskId)+'">Back to follow-up / edit message</button>':'')
+    +'<p class="modal-hint">'+esc(draft.to)+' · '+esc(draft.venue)+'</p><p class="modal-hint">Review and send in Gmail. Select ernestreyneke@gmail.com as the sending account. The button opens your default email app; choose Gmail there. FieldFlow is not connected to your mailbox and cannot detect whether you pressed Send. This draft has no PDF attachment.</p>'
     +(long?'<p role="status">This message is long. Copy the full message below and paste it into the email draft; it will open with the recipient and subject only.</p>':'')
     +'<a class="btn btn-secondary btn-block" style="text-decoration:none" href="'+esc(launch)+'">Open email app'+(long?' (paste message)':' again')+'</a>'
     +'<details class="history"><summary>View / copy message</summary><label for="email-follow-up-body">Draft message</label><textarea class="field" id="email-follow-up-body" readonly rows="9">'+esc(draft.body)+'</textarea><button class="text-btn" data-action="copy-follow-up-body">Copy full message</button></details>'
@@ -815,8 +851,9 @@ function exportKmCsv() {
 
 document.addEventListener('click', async event => {
   const target=event.target.closest('[data-screen],[data-action]'); if(!target)return;
-  if(target.dataset.screen){screen=target.dataset.screen; filter=target.dataset.filter||'All'; query=''; modalQuery=''; modal=null; render(); return;}
   const action=target.dataset.action;
+  if(document.querySelector('.follow-up-detail') && action!=='copy-task-message' && (target.dataset.screen || (action!=='close-modal'||target===event.target||!target.classList.contains('modal-backdrop'))) && !saveTaskMessage()) {toast('Save failed. Copy your message before leaving this screen.');return;}
+  if(target.dataset.screen){screen=target.dataset.screen; filter=target.dataset.filter||'All'; query=''; modalQuery=''; modal=null; render(); return;}
   if(action==='close-modal'){
     if(target.classList.contains('modal-backdrop') && event.target !== target) return;
     modal=null;render();
@@ -855,7 +892,27 @@ document.addEventListener('click', async event => {
   else if(action==='add-trip')tripFormModal();
   else if(action==='edit-trip')tripFormModal(target.dataset.id);
   else if(action==='delete-trip'){const trip=data.travel.trips.find(item=>item.id===target.dataset.id);if(!trip||!confirm(`Delete the ${Number(trip.distanceKm||0).toFixed(1)} km trip? This cannot be undone.`))return;data.travel.trips=data.travel.trips.filter(item=>item.id!==trip.id);save();modal=null;render();toast('Trip deleted');}
-  else if(action==='toggle-task'){const t=data.tasks.find(x=>x.id===target.dataset.id);t.done=!t.done;t.completedAt=t.done?new Date().toISOString():null;if(t.wineId){const relation=findCustomerWine(data,t.customerId,t.wineId);if(relation)relation.followUpAt=t.done?null:t.due;}const visit=data.visits.find(item=>item.followUpTaskId===t.id);if(visit)visit.followUpCompleted=t.done;save();if(modal?.includes('data-action="add-customer-task"'))customerDetail(t.customerId);else render();toast(t.done?'Follow-up completed':'Follow-up reopened');}
+  else if(action==='toggle-task'){const t=data.tasks.find(x=>x.id===target.dataset.id);if(!t)return;t.done=!t.done;t.completedAt=t.done?new Date().toISOString():null;if(t.wineId){const relation=findCustomerWine(data,t.customerId,t.wineId);if(relation)relation.followUpAt=t.done?null:t.due;}const visit=data.visits.find(item=>item.followUpTaskId===t.id);if(visit)visit.followUpCompleted=t.done;save();if(document.querySelector('.follow-up-detail'))followUpDetail(t.id);else if(modal?.includes('data-action="add-customer-task"'))customerDetail(t.customerId);else render();toast(t.done?'Follow-up completed':'Follow-up reopened');}
+  else if(action==='open-task')followUpDetail(target.dataset.id);
+  else if(action==='copy-task-message'){
+    const input=document.getElementById('task-message-body');if(!input)return;
+    try{await navigator.clipboard.writeText(input.value);toast('Message copied. Paste it into Gmail or your messaging app.');}catch{input.focus();input.select();toast('Press and hold the selected message to copy it.');}
+  }
+  else if(action==='share-task-message'){
+    const input=document.getElementById('task-message-body');if(!input)return;
+    if(!navigator.share){toast('Message sharing is unavailable. Use Copy message instead.');return;}
+    try{await navigator.share({text:input.value});toast('Message handed to your chosen app. Review the recipient before sending.');}catch(error){if(error.name!=='AbortError')toast('Could not share. Use Copy message instead.');}
+  }
+  else if(action==='email-task-message'){
+    const context=followUpContext(data,target.dataset.id);if(!context?.customer)return;
+    if(!validContactEmail(context.customer.email)){toast('Add a valid email in the client details first. Your message is saved here.');return;}
+    const message=saveTaskMessage();if(!message)return;
+    const previous=data.emailFollowUpDraft;
+    const same=previous?.taskId===message.taskId&&previous?.customerId===message.customerId;
+    if(previous&&!same&&!confirm('Replace the pending email draft? No sent history will be removed.'))return;
+    data.emailFollowUpDraft={...message,to:context.customer.email,visitId:context.linked?context.visit.id:null,contactPerson:context.task.contactPerson||context.customer.contact||'',venue:context.customer.name,id:same?previous.id:crypto.randomUUID(),createdAt:same?previous.createdAt:new Date().toISOString()};
+    try{persistLocal();emailFollowUpModal();}catch{data.emailFollowUpDraft=previous;toast('Could not save the email draft. Your follow-up message is retained.');}
+  }
   else if(action==='add-task')taskModal();
   else if(action==='add-customer-task')taskModal(null,{customerId:target.dataset.id,contactPerson:customer(target.dataset.id)?.contact||''});
   else if(action==='edit-task')taskModal(target.dataset.id);
@@ -906,7 +963,7 @@ document.addEventListener('click', async event => {
       modal=null;render();toast('Email follow-up marked as sent — your confirmation recorded.');
     }catch(error){data=before;toast(error.message||'Could not save the confirmation. Please retry.');}
   }
-  else if(action==='open-pdf-share')openPdfShare(target.dataset.id);
+  else if(action==='open-pdf-share')openPdfShare(target.dataset.id,target.dataset.taskId);
   else if(action==='retry-pdf')preparePdfShare();
   else if(action==='share-pdf'){
     target.disabled=true;
@@ -968,6 +1025,7 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if(event.target.id==='task-message-subject'||event.target.id==='task-message-body')saveTaskMessage();
   if(event.target.id==='visit-client-search'){
     const pos=event.target.selectionStart;data.visitStartDraft.query=event.target.value;startVisitModal();const input=document.getElementById('visit-client-search');input?.focus();input?.setSelectionRange(pos,pos);try{persistLocal();}catch{}
   }
@@ -1109,17 +1167,18 @@ function updatePdfRecipient() {
   if(copy)copy.disabled=!client?.email;
 }
 
-function openPdfShare(customerId='') {
+function openPdfShare(customerId='',taskId='') {
   const options=[...data.customers].sort((a,b)=>a.name.localeCompare(b.name));
   modal='<div class="modal-backdrop" data-action="close-modal"><section class="modal" id="pdf-share-panel" role="dialog" aria-modal="true" aria-label="Send price-list PDF">'
     +'<div class="modal-head"><h2>Send price-list PDF</h2><button class="close-btn" data-action="close-modal" aria-label="Close">'+icon('x')+'</button></div>'
+    +(taskId?'<button class="text-btn" data-action="open-task" data-id="'+esc(taskId)+'">Back to follow-up</button>':'')
     +'<p class="modal-hint">Original supplier PDF · '+PRICE_LIST_DATE+' · 7 pages. Sends the complete supplied PDF, not your current product filter.</p>'
     +'<div class="form-group"><label for="pdf-client">Client (optional)</label><select class="field" id="pdf-client"><option value="">Choose recipient in your email app</option>'
     +options.map(c=>'<option value="'+esc(c.id)+'" '+(c.id===customerId?'selected':'')+'>'+esc(c.name)+'</option>').join('')+'</select></div>'
     +'<div class="form-group"><label for="pdf-recipient-email">Client email</label><input class="field" id="pdf-recipient-email" type="text" readonly placeholder="No saved email — enter it in your email app"><button class="text-btn" data-action="copy-pdf-email">Copy email address</button></div>'
     +'<p id="pdf-share-status" class="modal-hint" role="status" aria-live="polite">Preparing PDF…</p>'
     +'<button class="btn btn-primary btn-block" data-action="share-pdf" disabled>'+icon('mail')+' Share PDF attachment</button>'
-    +'<p class="modal-hint">Choose Outlook or another app, paste/select the client’s email, then send. FieldFlow cannot confirm delivery.</p>'
+    +'<p class="modal-hint">Choose Gmail and select ernestreyneke@gmail.com in the From field. Paste/select the client’s email and check that the PDF attachment is visible before sending. FieldFlow hands over the actual PDF, but cannot inspect Gmail or confirm delivery.</p>'
     +'<a class="btn btn-secondary btn-block" style="text-decoration:none" href="'+PRICE_LIST_PDF_URL+'" download="'+PRICE_LIST_PDF_NAME+'">'+icon('download')+' Download PDF</a>'
     +'<p class="modal-hint">If sharing is unavailable: download the PDF, open an email draft below, and attach the downloaded file manually.</p>'
     +'<button class="btn btn-white btn-block" data-action="pdf-email-draft">Open email draft (attach PDF yourself)</button>'
