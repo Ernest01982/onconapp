@@ -242,11 +242,20 @@ export function listingCycleReminders(customers, reference = new Date()) {
     const leadDays = LISTING_REMINDER_DAYS.includes(Number(customer.listingReminderDays)) ? Number(customer.listingReminderDays) : 60;
     const remindAt = new Date(targetDay); remindAt.setDate(remindAt.getDate() - leadDays);
     const windowEnds = new Date(targetDay); windowEnds.setDate(windowEnds.getDate() + 31);
-    if (today >= windowEnds) continue;
-    const state = today >= targetDay ? 'open' : today >= remindAt ? 'due' : 'upcoming';
+    const state = today >= windowEnds ? 'review' : today >= targetDay ? 'open' : today >= remindAt ? 'due' : 'upcoming';
     reminders.push({ customerId:customer.id, targetAt:targetDay.toISOString(), remindAt:remindAt.toISOString(), leadDays, state });
   }
   return reminders.sort((a,b) => new Date(a.targetAt) - new Date(b.targetAt));
+}
+
+export function planListingDateFollowUp(visit) {
+  // Reuse existing follow-up fields; do not invent or remove a listing date.
+  if (!visit || listingCycleTarget(visit)) return false;
+  visit.followUpRequired = true;
+  visit.followUpReason ||= 'Ask when menu or wine listings reopen';
+  visit.nextAction ||= 'Ask when menu or wine listings reopen';
+  visit.followUpContact ||= visit.contactSnapshot?.person || '';
+  return true;
 }
 
 export function calculateTripDistance({ startOdometer, endOdometer, manualDistance, gpsDistance = 0 }) {

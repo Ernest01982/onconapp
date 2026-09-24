@@ -86,6 +86,7 @@ test('listing-cycle reminders stay separate and honour 30, 60 and 90 day notice'
   ];
   const reminders = listingCycleReminders(customers, new Date('2026-09-10T12:00:00'));
   assert.deepEqual(reminders.map(item => [item.customerId, item.state, item.leadDays]), [
+    ['expired', 'review', 30],
     ['open', 'open', 30],
     ['due', 'due', 60],
     ['later', 'upcoming', 90]

@@ -1,5 +1,25 @@
 # FieldFlow
 
+### Save a client to phone contacts (v18)
+
+When adding a client, tick **Also save to phone contacts**. This also works with **Start visit → Add new client**. After the client is saved, tap **Download contact file**, open the downloaded `.vcf` file, choose Contacts and confirm Save. Existing clients offer **Save to phone contacts** in their details.
+
+The file includes the venue, person, role, phone and email, not private CRM notes. It is a one-off copy: later edits in FieldFlow do not update your phone automatically. Check existing phone contacts before importing again to avoid duplicates. Cancelling the import does not remove the FieldFlow client or active visit. No address-book permission or database change is required.
+
+### Send the actual PDF through WhatsApp (v18)
+
+Open a client → **Send price-list PDF** (or Price List → Send PDF) → **Share PDF via WhatsApp**. In your phone's sharing menu choose WhatsApp or WhatsApp Business, select the recipient, check the PDF and confirm Send. The saved client phone number is available to copy; FieldFlow cannot preselect the chat or verify delivery. If WhatsApp is missing or file sharing is unavailable, use **Download PDF**, then attach the downloaded file as a **Document** in WhatsApp. The email-sharing option remains available.
+
+Implementation references: [Web Share file handoff and device-dependent destinations](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/share), [vCard 3.0 contact format](https://www.rfc-editor.org/rfc/rfc2426).
+
+### Listing-date and reporting repairs (v18)
+
+A visit can be saved when the buyer does not yet know the next menu/listing date, including the “Not doing listings now” outcome. To ask again later, tap **Date unknown — ask again later**, choose a follow-up date and review the reason/contact. It creates a normal linked follow-up, not an invented listing window. Existing details are kept.
+
+Windows more than 30 days past their saved target remain under **Activity → Listing windows → Needs review**. Open **Review cycle → Edit cycle** to save the next known date. Past visit snapshots are not changed. Reviews are not counted as open buying opportunities; these are in-app reminders, not push notifications.
+
+Reports and email summaries retain minute precision. Activity/travel use the selected period; current pipeline, active listings and listing windows are labelled Current. Ever listed is an all-history figure, not period conversion. Completed follow-ups without a valid completion date remain in history but are explicitly excluded from period completion totals. This release uses existing fields and requires no database migration.
+
 ### Email follow-up (v15)
 
 Open a client or a visit → Email Follow-up. The configured email app opens with recipient, subject and contextual message. Choose the work sending account in Outlook, review/edit the draft and send manually. Return to FieldFlow → Mark Email as Sent to record your confirmation once. Pending confirmation is available on Today and Activity after a reload.
