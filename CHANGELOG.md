@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-25 — v19: open the selected client's WhatsApp
+
+- Added Open client’s WhatsApp to client details and the PDF panel. The PDF action reads the current selected client at the moment of the tap; it never defaults to the rep or another client. The panel shows the client name and resolved international number before opening the chat.
+- Added conservative phone-format handling: South African local 10-digit numbers become +27; explicit +country-code/00 international numbers retain their digits. Missing, ambiguous, multi-number and malformed entries are blocked with guidance. Original saved phone values are not rewritten. Format validation does not prove that the number has a WhatsApp account.
+- Prioritised Download PDF → Open client’s WhatsApp → attach as Document. This opens the correct saved-number chat without pretending the PDF is automatically attached or sent. Kept native PDF attachment sharing, now labelled Share PDF — choose WhatsApp recipient to make its manual-recipient selection clear. No text, private notes or links to the PDF are silently added to the direct-chat URL.
+- No data migration, database write, account change or new service/API dependency. Bumped the offline cache to v19. Existing email and contact-file export remain unchanged.
+- Verification: 56 automated tests pass; production build passes. Isolated Chrome workflows at 360px, 412px and 1280px verify exact outgoing chat URLs, client switching, number corrections/reload, international format, invalid/missing selection blocking, recipient preservation during offline/online redraw, unchanged original PDF hash, native PDF sharing/cancellation and no auto-completion or CRM mutation. Screenshots reviewed; no page overflow or runtime exceptions in the tested new workflows. Offline PDF download/share/fallback/retry regression passes. No actual WhatsApp chats, contacts or messages were opened/created in tests.
+- Regression: existing follow-up messages, linked notes, email drafts, PDF file handoff, edit/reschedule, completion/reopening and reload persistence pass at 360px, 412px and 1280px. One concurrent browser run timed out waiting for an unchanged follow-up control; its isolated rerun passed without an app change.
+- Limit: the direct chat requires an active WhatsApp number and the user's phone/app handoff. The user must attach the downloaded PDF in that chat and confirm Send; the browser cannot combine preselected recipient plus automatic file attachment through native sharing or confirm delivery.
+
 ## 2026-09-24 — v18: phone contacts, WhatsApp PDF sharing and audit repairs
 
 - Added opt-in “Also save to phone contacts” to new/edit client forms, including the Start Visit client flow; the new-client draft preserves this choice when going Back. Existing clients also offer Save to phone contacts. A downloadable UTF-8 vCard contains only venue, contact person, role, phone and email. The client/active visit is saved before the contact-import instructions open. Import is confirmed in the phone Contacts app; there is no address-book access, automatic contact overwrite or ongoing phone-contact sync.

@@ -2,6 +2,7 @@ import { draftVisitNote, questionScope, savedReimbursement } from './reliability
 import { followUpContext, followUpMessage } from './follow-up-actions.js';
 import { activityMetrics, formatTradeTime } from './reporting.js';
 import { buildPhoneContact } from './phone-contact.js';
+import { clientWhatsAppTarget } from './client-whatsapp.js';
 import { buildEmailFollowUp, followUpMailto, markEmailFollowUpSent, validContactEmail } from './email-follow-up.js';
 import { realProducts, PRICE_LIST_DATE } from './products-data.js';
 import { PRICE_LIST_PDF_URL, PRICE_LIST_PDF_NAME, loadPriceListPdf, canSharePdf, sharePriceListPdf } from './price-list-pdf.js';
@@ -570,7 +571,7 @@ function customerDetail(id) {
   const relationshipRows=relations.map(relation=>{const product=wine(relation.wineId);return `<div class="card wine-relation ${relationshipTone(relation.status)}"><button class="relation-main" data-action="edit-customer-wine" data-id="${relation.id}"><strong>${esc(product?.name||'Wine')}</strong><span class="status ${relationshipTone(relation.status)}">${esc(relation.status)}</span><small>${relation.status==='Listed'&&relation.listingDate?`Listed ${shortDate(relation.listingDate)}`:relation.followUpAt?`Follow up ${dayLabel(relation.followUpAt)}`:'Updated '+shortDate(relation.updatedAt)}</small>${relation.allocation?`<small>Allocation: ${esc(relation.allocation)}</small>`:''}</button><div class="relation-actions">${relation.status!=='Listed'?`<button class="mini-btn positive" data-action="set-wine-status" data-id="${relation.id}" data-status="Listed">Mark listed</button>`:''}${relation.status==='Listed'?`<button class="mini-btn" data-action="set-wine-status" data-id="${relation.id}" data-status="Delisted">Delist</button>`:''}<button class="mini-btn" data-action="wine-follow-up" data-id="${relation.id}">Follow-up</button></div></div>`}).join('');
   modal=`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(c.name)} details">
     <div class="handle"></div><div class="modal-head"><span></span><button class="close-btn" data-action="close-modal" aria-label="Close">${icon('x')}</button></div>
-    <div class="card detail-banner"><span class="status good">${esc(c.type)}</span><h2>${esc(c.name)}</h2><p>${esc(c.area||'Area not added')} · ${c.lastVisit?`last visit ${dayLabel(c.lastVisit)}`:'never visited'}</p><div class="detail-actions"><button class="btn btn-primary" data-action="start-visit" data-id="${c.id}">${icon('plus')} Start visit</button><button class="btn btn-white" data-action="edit-customer" data-id="${c.id}">Edit details</button><button class="btn btn-white" data-action="phone-contact" data-id="${esc(c.id)}">Save to phone contacts</button><button class="btn btn-white" data-action="open-pdf-share" data-id="${c.id}">${icon('mail')} Send price-list PDF</button><a class="btn btn-white" style="text-decoration:none" href="mailto:${encodeURIComponent(c.email)}">${icon('mail')} Email</a><button class="btn btn-white" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} Save this location</button></div></div>
+    <div class="card detail-banner"><span class="status good">${esc(c.type)}</span><h2>${esc(c.name)}</h2><p>${esc(c.area||'Area not added')} · ${c.lastVisit?`last visit ${dayLabel(c.lastVisit)}`:'never visited'}</p><div class="detail-actions"><button class="btn btn-primary" data-action="start-visit" data-id="${c.id}">${icon('plus')} Start visit</button><button class="btn btn-white" data-action="edit-customer" data-id="${c.id}">Edit details</button><button class="btn btn-white" data-action="phone-contact" data-id="${esc(c.id)}">Save to phone contacts</button><button class="btn btn-white" data-action="open-client-whatsapp" data-id="${esc(c.id)}">Open client’s WhatsApp</button><button class="btn btn-white" data-action="open-pdf-share" data-id="${c.id}">${icon('mail')} Send price-list PDF</button><a class="btn btn-white" style="text-decoration:none" href="mailto:${encodeURIComponent(c.email)}">${icon('mail')} Email</a><button class="btn btn-white" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} Save this location</button></div></div>
     <div class="section-row"><h2>Contact</h2></div><div class="card info-card"><h3>${esc(c.contact||'No contact added')}</h3><p style="margin:-6px 0 12px;color:var(--muted)">${esc(c.role||'Role not added')}</p><div class="info-line"><span>Email</span><strong>${esc(c.email||'Not added')}</strong></div><div class="info-line"><span>Phone</span><strong>${esc(c.phone||'Not added')}</strong></div>${c.address?`<div class="info-line"><span>Address</span><strong>${esc(c.address)}</strong></div>`:''}</div>
     <div class="section-row"><h2>Saved location</h2></div><div class="card info-card">${hasCustomerLocation(c)?`<div class="info-line" style="border:0;padding-top:0"><span>Latitude</span><strong>${c.lat.toFixed(5)}</strong></div><div class="info-line"><span>Longitude</span><strong>${c.lng.toFixed(5)}</strong></div>`:`<p style="margin:0 0 14px;color:var(--muted);font-size:13px">No venue position saved yet. Pin it while you are at the client.</p>`}<button class="btn btn-secondary btn-block btn-small" data-action="set-customer-location" data-id="${c.id}">${icon('pin')} ${hasCustomerLocation(c)?'Update':'Save'} from this device</button></div>
     <div class="section-row"><h2>Opportunity</h2></div><div class="card info-card"><div class="info-line" style="border:0;padding-top:0"><span>${esc(c.opportunity)}</span><strong>${currency(c.value)}</strong></div></div>
@@ -990,6 +991,13 @@ document.addEventListener('click', async event => {
     catch(error){if(status)status.textContent=error.message||'Contact download could not start. Your client is still saved; please retry.';}
   }
   else if(action==='open-pdf-share')openPdfShare(target.dataset.id,target.dataset.taskId);
+  else if(action==='open-client-whatsapp'){
+    const id=target.dataset.context==='pdf'?document.getElementById('pdf-client')?.value:target.dataset.id;
+    const recipient=clientWhatsAppTarget(customer(id));
+    if(!recipient.href){toast(recipient.error);return;}
+    // Only a user tap opens the selected client's chat. No message or file is sent.
+    window.open(recipient.href,'_blank','noopener,noreferrer');
+  }
   else if(action==='retry-pdf')preparePdfShare();
   else if(action==='share-pdf'||action==='share-pdf-whatsapp'){
     const buttons=document.querySelectorAll('[data-action="share-pdf"],[data-action="share-pdf-whatsapp"]');
@@ -1202,6 +1210,11 @@ function updatePdfRecipient() {
   if(phone)phone.value=client?.phone||'';
   const copyPhone=document.querySelector('[data-action="copy-pdf-phone"]');
   if(copyPhone)copyPhone.disabled=!client?.phone;
+  const recipient=clientWhatsAppTarget(client);
+  const openChat=document.querySelector('[data-action="open-client-whatsapp"][data-context="pdf"]');
+  if(openChat)openChat.disabled=!recipient.href;
+  const description=document.getElementById('pdf-whatsapp-recipient');
+  if(description)description.textContent=recipient.href?`${client.name} · +${recipient.number} — saved client number`:recipient.error;
 }
 
 function openPdfShare(customerId='',taskId='') {
@@ -1214,13 +1227,16 @@ function openPdfShare(customerId='',taskId='') {
     +options.map(c=>'<option value="'+esc(c.id)+'" '+(c.id===customerId?'selected':'')+'>'+esc(c.name)+'</option>').join('')+'</select></div>'
     +'<div class="form-group"><label for="pdf-recipient-email">Client email</label><input class="field" id="pdf-recipient-email" type="text" readonly placeholder="No saved email — enter it in your email app"><button class="text-btn" data-action="copy-pdf-email">Copy email address</button></div>'
     +'<div class="form-group"><label for="pdf-recipient-phone">Client phone / WhatsApp</label><input class="field" id="pdf-recipient-phone" type="text" readonly placeholder="No saved number — choose a recipient in WhatsApp"><button class="text-btn" data-action="copy-pdf-phone">Copy phone number</button></div>'
-    +'<p id="pdf-share-status" class="modal-hint" role="status" aria-live="polite">Preparing PDF…</p>'
-    +'<button class="btn btn-primary btn-block" data-action="share-pdf-whatsapp" disabled>Share PDF via WhatsApp</button>'
-    +'<p class="modal-hint">In your phone’s sharing menu choose WhatsApp (or WhatsApp Business), select the client and confirm Send. The actual PDF is included, not a website link. FieldFlow cannot choose the chat or verify delivery. If WhatsApp is not offered, download the PDF below and attach it as a Document in your chat.</p>'
+    +'<h3>Send to this client’s number</h3><p id="pdf-whatsapp-recipient" class="modal-hint" role="status" aria-live="polite"></p>'
+    +'<a class="btn btn-secondary btn-block" style="text-decoration:none" href="'+PRICE_LIST_PDF_URL+'" download="'+PRICE_LIST_PDF_NAME+'">'+icon('download')+' Download PDF</a>'
+    +'<button class="btn btn-primary btn-block" style="margin-top:10px" data-action="open-client-whatsapp" data-context="pdf" aria-describedby="pdf-whatsapp-recipient" disabled>Open client’s WhatsApp</button>'
+    +'<p class="modal-hint">Download the PDF, open this client’s chat, then attach the downloaded file as a Document and tap Send. Opening the chat does not automatically attach or send the PDF. The saved number must be registered on WhatsApp.</p>'
+    +'<h3>Or use your phone’s sharing menu</h3><p id="pdf-share-status" class="modal-hint" role="status" aria-live="polite">Preparing PDF…</p>'
+    +'<button class="btn btn-secondary btn-block" data-action="share-pdf-whatsapp" disabled>Share PDF — choose WhatsApp recipient</button>'
+    +'<p class="modal-hint">This option includes the actual PDF, but you must choose WhatsApp and the correct recipient yourself. It cannot preselect the client’s saved number or verify delivery.</p>'
     +'<button class="btn btn-secondary btn-block" data-action="share-pdf" disabled>'+icon('mail')+' Share PDF attachment</button>'
     +'<p class="modal-hint">Choose Gmail and select ernestreyneke@gmail.com in the From field. Paste/select the client’s email and check that the PDF attachment is visible before sending. FieldFlow hands over the actual PDF, but cannot inspect Gmail or confirm delivery.</p>'
-    +'<a class="btn btn-secondary btn-block" style="text-decoration:none" href="'+PRICE_LIST_PDF_URL+'" download="'+PRICE_LIST_PDF_NAME+'">'+icon('download')+' Download PDF</a>'
-    +'<p class="modal-hint">If sharing is unavailable: download the PDF and attach it as a Document in WhatsApp, or open an email draft below and attach the file manually.</p>'
+    +'<p class="modal-hint">For email without file sharing, download the PDF above and attach it manually to the draft below.</p>'
     +'<button class="btn btn-white btn-block" data-action="pdf-email-draft">Open email draft (attach PDF yourself)</button>'
     +'<button class="text-btn" data-action="retry-pdf" hidden>Retry loading PDF</button></section></div>';
   render();
