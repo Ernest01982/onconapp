@@ -1,8 +1,10 @@
 # FieldFlow
 
-### Open the client's WhatsApp (v19)
+### Open the client's WhatsApp (v20)
 
-Open a client → **Open client’s WhatsApp**, or select the client in **Send price-list PDF** and tap **Open client’s WhatsApp**. This uses that client's saved Phone field—not the rep's number. The PDF panel shows the selected client and international number first. South African `082…` numbers become `+2782…` for the link only; saved data is unchanged. For other countries, save a full `+country-code` number. Missing/ambiguous numbers are blocked; edit the client's Phone field to correct them.
+Open a client → **Open client’s WhatsApp**, or select the client in **Send price-list PDF** and tap **Open [client] on WhatsApp**. This uses that client's saved Phone field—not the rep's number. The PDF panel shows the selected client and international number first. South African `082…` numbers become `+2782…` for the link only; saved data is unchanged. For other countries, save a full `+country-code` number. Missing/ambiguous numbers are blocked; edit the client's Phone field to correct them.
+
+The chat uses a normal same-tab link, not a popup. If WhatsApp shows a web page, tap **Continue to Chat / Open WhatsApp** there. Use Back to return to FieldFlow. A local save error blocks leaving; keep FieldFlow open and use the recovery controls first. Never clear browser storage to troubleshoot this.
 
 To send the actual PDF to that exact number: **Download PDF → Open client’s WhatsApp → attach the downloaded PDF as a Document → Send**. Opening the chat alone does not attach or send anything. The alternative **Share PDF — choose WhatsApp recipient** includes the file through the phone's share menu, but still requires choosing the chat manually. The recipient must have an active WhatsApp account. See [WhatsApp's official click-to-chat guidance](https://faq.whatsapp.com/5913398998672934).
 
@@ -14,7 +16,7 @@ The file includes the venue, person, role, phone and email, not private CRM note
 
 ### Send the actual PDF through WhatsApp (v18)
 
-Open a client → **Send price-list PDF** (or Price List → Send PDF) → **Share PDF — choose WhatsApp recipient**. In your phone's sharing menu choose WhatsApp or WhatsApp Business, select the recipient, check the PDF and confirm Send. This file-sharing option cannot preselect the chat or verify delivery. To open the saved client's exact number instead, use the v19 direct-chat workflow above. The email-sharing option remains available.
+Open a client → **Send price-list PDF** (or Price List → Send PDF) → **Share PDF — choose WhatsApp recipient**. In your phone's sharing menu choose WhatsApp or WhatsApp Business, select the recipient, check the PDF and confirm Send. This file-sharing option cannot preselect the chat or verify delivery. To open the saved client's exact number instead, use the direct-chat workflow above. The email-sharing option remains available.
 
 Implementation references: [Web Share file handoff and device-dependent destinations](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/share), [vCard 3.0 contact format](https://www.rfc-editor.org/rfc/rfc2426).
 

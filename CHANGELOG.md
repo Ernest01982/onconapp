@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-25 — v20: popup-free client WhatsApp handoff
+
+- Replaced the unchecked popup launch with a real, same-tab WhatsApp link in client details and the PDF panel. The selected client and international number stay visible; the link is refreshed when the client changes and validated again on the tap. No private notes, message text or PDF link is added to the chat URL.
+- Clarified the exact-recipient route: Download PDF → Open [client] on WhatsApp → paperclip / Document / Downloads → select the supplier PDF and Send. The separate native-share option still includes the actual file but requires manual recipient selection. Increased the numbered instructions' readability on small screens.
+- Invalid/missing numbers cannot navigate. A local save failure or workspace conflict blocks leaving for WhatsApp; records and recovery controls stay available. Failed follow-up message saves now explicitly prevent default link navigation as well.
+- No schema migration, account change, live CRM write, record rewrite or PDF replacement. Phone-contact export and existing email sharing remain unchanged. Offline cache advanced to v20.
+- Verification: 56 automated tests and production build pass. Isolated browser checks at 360px, 412px and 1280px exercise real navigation intercepted before any WhatsApp request is transmitted (the old test only mocked window.open). Verified exact recipient, client switching, corrected numbers after reload, keyboard activation, no popups, no referrer/private payload, invalid-number blocking, unsaved-work navigation blocking, selection through offline redraw, unchanged 443064-byte supplier PDF hash, sharing/cancellation and unchanged CRM records. Mobile screenshots reviewed.
+- Regression: follow-up notes/messages, email drafts, PDF file handoff, reschedule/completion/reopening and persistence pass at all three sizes. PDF download, cancellation, unsupported sharing, retry and offline access pass. No runtime exceptions in tested workflows; no real messages were sent.
+- Remaining limit: this repairs the browser handoff, not WhatsApp's attachment interface. Opening the exact-number chat does not attach the PDF automatically. The phone must have WhatsApp available and that number must be registered; the native Samsung handoff and final send still require on-device verification.
+
 ## 2026-09-25 — v19: open the selected client's WhatsApp
 
 - Added Open client’s WhatsApp to client details and the PDF panel. The PDF action reads the current selected client at the moment of the tap; it never defaults to the rep or another client. The panel shows the client name and resolved international number before opening the chat.
