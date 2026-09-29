@@ -1,4 +1,4 @@
-import { fingerprint, syncDecision, mergeRecords } from './sync-safety.js';
+import { fingerprint, syncDecision, mergeRecords, canonicalTripRow, upgradeReliabilityBaselines } from './sync-safety.js';
 import { normalizeCustomerFields, upgradeCustomerFieldBaselines } from './customer-fields.js';
 import { createClient } from '@supabase/supabase-js';
 
@@ -100,6 +100,8 @@ function visitRow(item, userId) {
     longitude: numberOrNull(item.lng),
     summary: item.summary || '',
     raw_note: item.rawNote ?? null,
+    time_corrections: item.timeCorrections || [],
+    location_capture: item.locationCapture || {},
     products: item.products || [],
     outcome: item.outcome || '',
     next_action: item.nextAction || '',
@@ -187,7 +189,7 @@ function productRow(item, userId) {
 }
 
 function tripRow(item, userId) {
-  return {
+  return canonicalTripRow({
     user_id: userId,
     id: item.id,
     started_at: item.start,
@@ -198,15 +200,16 @@ function tripRow(item, userId) {
     from_label: item.fromLabel || '',
     to_label: item.toLabel || '',
     distance_km: Number(item.distanceKm) || 0,
-    rate_per_km: Number(item.ratePerKm) || 4.9,
+    rate_per_km: Number(item.ratePerKm ?? 4.9),
     reimbursement: Number(item.reimbursement) || 0,
     customer_id: item.customerId || null,
     purpose: item.purpose || 'Business travel',
     start_odometer: numberOrNull(item.startOdometer),
     end_odometer: numberOrNull(item.endOdometer),
     notes: item.notes || '',
-    distance_source: item.distanceSource || 'gps'
-  };
+    distance_source: item.distanceSource || 'gps',
+    recording_flags: item.recordingFlags || []
+  });
 }
 
 function rowsFor(data, userId) {
@@ -277,6 +280,7 @@ async function syncRows(table, rows, userId, force = false, generation = identit
 
 export async function syncCloudNow(force = false) {
   upgradeCustomerFieldBaselines(getLocalData());
+  upgradeReliabilityBaselines(getLocalData());
   const data = JSON.parse(JSON.stringify(getLocalData()));
   const userId = session?.user?.id;
   const generation = identityGeneration;
@@ -295,7 +299,7 @@ export async function syncCloudNow(force = false) {
       display_name: data.profile?.name || '',
       initials: data.profile?.initials || '',
       territory: data.profile?.territory || '',
-      rate_per_km: Number(data.travel?.ratePerKm) || 4.9
+      rate_per_km: Number(data.travel?.ratePerKm ?? 4.9)
     };
     await syncRows('profiles',[profile],userId,force,generation);
 
@@ -361,7 +365,7 @@ function fromCustomer(row) {
 }
 
 function fromVisit(row) {
-  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, rawNote:row.raw_note, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source, wineOutcomes:row.wine_outcomes||[], contactSnapshot:row.contact_snapshot||{}, feedbackOutcome:row.feedback_outcome||row.outcome, currentWineIds:row.current_wine_ids||[], samplesLeftWineIds:row.samples_left_wine_ids||[], followUpRequired:Boolean(row.follow_up_required), followUpReason:row.follow_up_reason||'', followUpContact:row.follow_up_contact||'', followUpTaskId:row.follow_up_task_id||null, followUpCompleted:Boolean(row.follow_up_completed), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60 };
+  return { id:row.id, customerId:row.customer_id, start:row.started_at, end:row.ended_at, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), summary:row.summary, rawNote:row.raw_note, timeCorrections:row.time_corrections||[], locationCapture:row.location_capture||{}, products:row.products||[], outcome:row.outcome, nextAction:row.next_action, followUp:row.follow_up_at, source:row.source, wineOutcomes:row.wine_outcomes||[], contactSnapshot:row.contact_snapshot||{}, feedbackOutcome:row.feedback_outcome||row.outcome, currentWineIds:row.current_wine_ids||[], samplesLeftWineIds:row.samples_left_wine_ids||[], followUpRequired:Boolean(row.follow_up_required), followUpReason:row.follow_up_reason||'', followUpContact:row.follow_up_contact||'', followUpTaskId:row.follow_up_task_id||null, followUpCompleted:Boolean(row.follow_up_completed), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60 };
 }
 
 function fromTask(row) {
@@ -377,7 +381,7 @@ function fromProduct(row) {
 }
 
 function fromTrip(row) {
-  return { id:row.id, start:row.started_at, end:row.ended_at, points:row.points||[], fromCustomerId:row.from_customer_id, toCustomerId:row.to_customer_id, fromLabel:row.from_label, toLabel:row.to_label, distanceKm:Number(row.distance_km)||0, ratePerKm:Number(row.rate_per_km)||4.9, reimbursement:Number(row.reimbursement)||0, customerId:row.customer_id, purpose:row.purpose||'Business travel', startOdometer:numberOrNull(row.start_odometer), endOdometer:numberOrNull(row.end_odometer), notes:row.notes||'', distanceSource:row.distance_source||'gps' };
+  return { id:row.id, start:row.started_at, end:row.ended_at, points:row.points||[], fromCustomerId:row.from_customer_id, toCustomerId:row.to_customer_id, fromLabel:row.from_label, toLabel:row.to_label, distanceKm:Number(row.distance_km)||0, ratePerKm:Number(row.rate_per_km??4.9), reimbursement:Number(row.reimbursement)||0, customerId:row.customer_id, purpose:row.purpose||'Business travel', startOdometer:numberOrNull(row.start_odometer), endOdometer:numberOrNull(row.end_odometer), notes:row.notes||'', distanceSource:row.distance_source||'gps', recordingFlags:row.recording_flags||[] };
 }
 
 async function loadRemoteOrSeed() {
@@ -390,6 +394,7 @@ async function loadRemoteOrSeed() {
     assertCurrentIdentity(userId,generation);
     const interrupted=getLocalData();
     upgradeCustomerFieldBaselines(interrupted);
+    upgradeReliabilityBaselines(interrupted);
     if (interrupted._syncPendingBase) {
       interrupted._syncBase=interrupted._syncPendingBase;
       delete interrupted._syncPendingBase;
@@ -428,7 +433,7 @@ async function loadRemoteOrSeed() {
       customerWines: customerWines.data.map(fromCustomerWine),
       travel: {
         ...current.travel,
-        ratePerKm: Number(profileResult.data.rate_per_km) || 4.9,
+        ratePerKm: Number(profileResult.data.rate_per_km ?? 4.9),
         trips: trips.data.map(fromTrip),
         activeTrip: appState.data?.active_trip || null,
         lastPosition: appState.data?.last_position || null
@@ -578,6 +583,7 @@ export async function reviewCloudDifferences(){
   const userId=session?.user?.id,generation=identityGeneration;
   if(!userId||syncing)throw new Error('Wait for sync to finish, then try again.');
   upgradeCustomerFieldBaselines(getLocalData());
+  upgradeReliabilityBaselines(getLocalData());
   const results=[];pendingDifferences.clear();
   for(const table of Object.keys(mappers)){
     const raw=(await readRows(table,userId)).data;

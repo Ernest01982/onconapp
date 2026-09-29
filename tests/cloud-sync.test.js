@@ -55,6 +55,7 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
         if(this.operation==='update' && this.table==='visits' && corruptAfterVisitWrite)corruptNextVisitRead=true;
         if(this.operation==='update' && this.table==='customers' && corruptCustomerField)corruptNextCustomerRead=true;
         if(this.operation==='update' && this.table==='app_state' && editDuringStateWrite){const edit=editDuringStateWrite;editDuringStateWrite=null;edit();}
+        if(this.table==='travel_trips' && ['insert','update'].includes(this.operation))for(const row of result){row.distance_km=Number(row.distance_km.toFixed(3));row.reimbursement=Number(row.reimbursement.toFixed(2));}
         if(this.operation==='delete'){result=matches;tables[this.table]=rows.filter(r=>!matches.includes(r));}
         return Promise.resolve({data:structuredClone(this.single?result[0]||null:result),error:null}).then(resolve,reject);
       }catch(error){return Promise.reject(error).then(resolve,reject);}
@@ -199,6 +200,18 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   await cloud.resolveCloudDifference(differences[0].token,'device');
   assert.equal(await cloud.syncCloudNow(),true,status.error);
   assert.equal(tables.visits[0].raw_note,'Device correction');
+  workspace.travel.trips=[{id:'decimal-trip',start:'2026-09-29T08:00:00Z',end:'2026-09-29T09:00:00Z',distanceKm:12.345678,ratePerKm:4.9,reimbursement:12.3*4.9,recordingFlags:['GPS gap']}];
+  workspace.visits[0].timeCorrections=[{at:'2026-09-29T09:00:00Z',reason:'Confirmed times',before:{start:'2026-09-10T09:00:00Z',end:'2026-09-11T10:00:00Z'},after:{start:workspace.visits[0].start,end:workspace.visits[0].end}}];
+  workspace.visits[0].locationCapture={source:'venue-fallback'};
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
+  assert.equal(tables.travel_trips[0].distance_km,12.346);
+  assert.equal(tables.travel_trips[0].reimbursement,60.27);
+  assert.equal(tables.visits[0].time_corrections.length,1);
+  assert.equal(await cloud.refreshCloud(),true,status.error);
+  assert.equal(workspace.visits[0].timeCorrections[0].reason,'Confirmed times');
+  assert.equal(workspace.visits[0].locationCapture.source,'venue-fallback');
+  assert.deepEqual(workspace.travel.trips[0].recordingFlags,['GPS gap']);
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
   workspace.visits=[];
   assert.equal(await cloud.syncCloudNow(),true,status.error);
   assert.equal(tables.visits.length,0);

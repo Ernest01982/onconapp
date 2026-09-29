@@ -1,4 +1,5 @@
 import { mergeCatalogue } from './catalogue.js';
+import { upgradeReliabilityBaselines } from './sync-safety.js';
 import { normalizeCustomerFields, upgradeCustomerFieldBaselines } from './customer-fields.js';
 
 export const WINE_STATUSES = [
@@ -32,6 +33,7 @@ const isoNow = () => new Date().toISOString();
 export function normalizeWorkspace(workspace, products = []) {
   const normalized = clone(workspace || {});
   upgradeCustomerFieldBaselines(normalized);
+  upgradeReliabilityBaselines(normalized);
   normalized.products = mergeCatalogue(normalized.products, products);
   normalized.customers = Array.isArray(normalized.customers) ? normalized.customers : [];
   normalized.customerWines = Array.isArray(normalized.customerWines) ? normalized.customerWines : [];
@@ -39,7 +41,7 @@ export function normalizeWorkspace(workspace, products = []) {
   normalized.tasks = Array.isArray(normalized.tasks) ? normalized.tasks : [];
   normalized.travel = normalized.travel && typeof normalized.travel === 'object' ? normalized.travel : {};
   normalized.travel.trips = Array.isArray(normalized.travel.trips) ? normalized.travel.trips : [];
-  normalized.travel.ratePerKm = Number(normalized.travel.ratePerKm) || 4.9;
+  normalized.travel.ratePerKm = normalized.travel.ratePerKm != null && Number.isFinite(Number(normalized.travel.ratePerKm)) && Number(normalized.travel.ratePerKm)>=0 ? Number(normalized.travel.ratePerKm) : 4.9;
 
   normalized.customers = normalized.customers.map(customer => ({
     ...normalizeCustomerFields(customer),

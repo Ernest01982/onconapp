@@ -1,5 +1,17 @@
 # FieldFlow
 
+### Daily reliability check (v24)
+
+Before updating on your phone, export and keep a backup; never clear browser storage. Open **Today → Daily check** to compare this device with the latest verified cloud counts/time and inspect unfinished work, overdue follow-ups, missing details and suspect visit/travel times. Confirm a backup only after checking the downloaded file exists, and keep a copy off the phone. Pending changes still need a successful **Cloud verified** sync; matching counts alone do not prove the contents match.
+
+Open a flagged visit → **Edit notes, outcome & times**. Enter only times you can confirm and a correction reason. Confirming requests a recovery backup before saving; original times and the correction history remain available. No historical visit is shortened automatically.
+
+Choose **Send to → Primary / Additional** on a client, follow-up or PDF panel. The chosen contact applies to email, WhatsApp, PDF and contact export; check the visible recipient. Missing details do not silently redirect to somebody else. The PDF still requires the phone's share/attachment confirmation; opening a chat is not sending a file.
+
+**Reports → Download report CSV** opens in Excel and includes period activity plus clearly labelled current wine/client details. It contains private contact details and notes: share it only with authorised people. It is not a configurable multi-sheet XLSX report builder.
+
+GPS trips flag signal/background interruptions for odometer review. Keep the app visible when using GPS; this web app cannot guarantee tracking while locked. Reminders are in-app, not phone push notifications. The additive reliability migration must be applied before deploying this release to another Supabase project.
+
 ### If sync needs attention (v22)
 
 Keep the phone workspace intact. Tap your initials → **Profile & backup → Export** and keep the downloaded backup. Tap the **Sync needs attention →** warning to see the exact error, then try **Sync now**. If it persists, use **Copy sync error** and share that message for diagnosis. Do not clear browser data or choose a cloud/device copy without reviewing the differences.
@@ -10,7 +22,7 @@ v22 repairs a false comparison caused by older saved customer baselines predatin
 
 Open **Customers → Add client** or open a client → **Edit details**. Preferred supplier is optional. Expand **Additional contact (optional)** to save a second person's name, phone and email; enter only what you know. The same fields are available when adding a client from Start Visit.
 
-These details appear on the client record, are included in device backups and sync to the signed-in account. Search by either contact or the supplier. To remove a value, clear that field and save. The primary contact remains the recipient for existing email, WhatsApp, PDF sharing and phone-contact export actions; storing an additional contact does not redirect them.
+These details appear on the client record, are included in device backups and sync to the signed-in account. Search by either contact or the supplier. To remove a value, clear that field and save. The primary contact remains the default recipient. From v24, use Send to to explicitly choose the additional contact; storing one alone does not redirect communications.
 
 ### Open the client's WhatsApp (v20)
 

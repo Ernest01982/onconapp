@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-29 — v24: daily reliability and audit repairs
+
+- Added Today → Daily check: device versus last verified cloud totals/time, pending changes, manual backup-file confirmation, unfinished work, overdue tasks, suspect visit times, missing contacts/listing-cycle details and flagged GPS trips. Matching counts are not described as proof of matching contents.
+- Matched trip precision to database storage for strict upload/readback verification (KM 3 decimals, rate/reimbursement 2, odometers 1). Zero reimbursement rates remain valid. Historical saved baselines gain only known missing defaults/precision; real competing changes remain conflicts.
+- Added long/overnight visit warnings and explicit time correction with reason, confirmation, recovery backup download and retained original timestamps/audit history. Note-only edits preserve exact milliseconds. No real visit times were automatically changed.
+- Stored visit location source/accuracy evidence. GPS trips flag background recording, signal loss and callback gaps; odometer review is recommended. This is not native background tracking.
+- Added explicit primary/additional recipient selection across client, follow-up and PDF workflows. Missing additional details never fall back silently to the primary person. Added a quick follow-up to ask clients for unknown listing dates.
+- Added complete CSV report download for Excel, with period activity, all current wine links, listing events, contact readiness, notes, time corrections and travel evidence; protected formula-like text. Removed six-row listing breakdown truncation. This is not the planned configurable XLSX manager report builder.
+- Added mobile active-visit shortcuts, meaningful form labels, inert modal background, readable trade duration/year-aware dates, and mobile-fit sync-count table. Removed legacy demo cleanup based only on IDs c1–c5 so legitimate records are not discarded.
+- Applied additive migration 20260929165047_visit_travel_reliability: bounded visit time_corrections/location_capture and trip recording_flags JSON fields. Before/after checksums confirm all preexisting fields in 56 visits and 0 trips unchanged. No changes to authentication, ownership, RLS or existing records.
+- Tests: 69 automated tests and production build pass; isolated 360/412/1280px browser flows verify corrections, exact timestamp preservation, contact selection, denied GPS fallback, KM/reimbursement, CSV, backup and refresh persistence. Existing follow-up/PDF/email and client fields/sync recovery regression checks pass; offline supplier PDF share/download passes. No real CRM test writes or messages were sent.
+- Known limits: the user's phone must still complete and confirm its own verified sync. Download confirmation is manual. Actual overnight times require the user's input. System sharing cannot confirm message delivery. Phone push notifications, native background GPS and manager roles remain separate upgrades. Existing Supabase leaked-password protection warning remains an administrator setting to resolve separately.
+
 ## 2026-09-29 — v23: Niew Beverages communication identity
 
 - New contextual follow-up emails and follow-up message templates use Niew Beverages in subjects and signatures. Price-list sharing already uses Niew Beverages.
