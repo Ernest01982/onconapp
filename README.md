@@ -1,5 +1,11 @@
 # FieldFlow
 
+### Preferred supplier and additional contact (v21)
+
+Open **Customers → Add client** or open a client → **Edit details**. Preferred supplier is optional. Expand **Additional contact (optional)** to save a second person's name, phone and email; enter only what you know. The same fields are available when adding a client from Start Visit.
+
+These details appear on the client record, are included in device backups and sync to the signed-in account. Search by either contact or the supplier. To remove a value, clear that field and save. The primary contact remains the recipient for existing email, WhatsApp, PDF sharing and phone-contact export actions; storing an additional contact does not redirect them.
+
 ### Open the client's WhatsApp (v20)
 
 Open a client → **Open client’s WhatsApp**, or select the client in **Send price-list PDF** and tap **Open [client] on WhatsApp**. This uses that client's saved Phone field—not the rep's number. The PDF panel shows the selected client and international number first. South African `082…` numbers become `+2782…` for the link only; saved data is unchanged. For other countries, save a full `+country-code` number. Missing/ambiguous numbers are blocked; edit the client's Phone field to correct them.

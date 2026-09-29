@@ -1,4 +1,5 @@
 import { mergeCatalogue } from './catalogue.js';
+import { normalizeCustomerFields, upgradeCustomerFieldBaselines } from './customer-fields.js';
 
 export const WINE_STATUSES = [
   'Discussed',
@@ -30,6 +31,7 @@ const isoNow = () => new Date().toISOString();
 
 export function normalizeWorkspace(workspace, products = []) {
   const normalized = clone(workspace || {});
+  upgradeCustomerFieldBaselines(normalized);
   normalized.products = mergeCatalogue(normalized.products, products);
   normalized.customers = Array.isArray(normalized.customers) ? normalized.customers : [];
   normalized.customerWines = Array.isArray(normalized.customerWines) ? normalized.customerWines : [];
@@ -40,7 +42,7 @@ export function normalizeWorkspace(workspace, products = []) {
   normalized.travel.ratePerKm = Number(normalized.travel.ratePerKm) || 4.9;
 
   normalized.customers = normalized.customers.map(customer => ({
-    ...customer,
+    ...normalizeCustomerFields(customer),
     emailFollowUps: Array.isArray(customer.emailFollowUps) ? customer.emailFollowUps : [],
     menuChangeDate: customer.menuChangeDate || null,
     menuChangeMonth: /^\d{4}-\d{2}$/.test(customer.menuChangeMonth || '') ? customer.menuChangeMonth : '',

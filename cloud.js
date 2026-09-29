@@ -1,4 +1,5 @@
 import { fingerprint, syncDecision, mergeRecords } from './sync-safety.js';
+import { normalizeCustomerFields, upgradeCustomerFieldBaselines } from './customer-fields.js';
 import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
@@ -56,6 +57,7 @@ function notify(patch = {}) {
 }
 
 function customerRow(item, userId) {
+  const fields = normalizeCustomerFields(item);
   return {
     user_id: userId,
     id: item.id,
@@ -68,6 +70,10 @@ function customerRow(item, userId) {
     email: item.email || '',
     email_follow_ups: item.emailFollowUps || [],
     phone: item.phone || '',
+    preferred_supplier: fields.preferredSupplier,
+    additional_contact: fields.additionalContact,
+    additional_phone: fields.additionalPhone,
+    additional_email: fields.additionalEmail,
     last_visit: item.lastVisit || null,
     opportunity: item.opportunity || '',
     opportunity_value: Number(item.value) || 0,
@@ -270,6 +276,7 @@ async function syncRows(table, rows, userId, force = false, generation = identit
 }
 
 export async function syncCloudNow(force = false) {
+  upgradeCustomerFieldBaselines(getLocalData());
   const data = JSON.parse(JSON.stringify(getLocalData()));
   const userId = session?.user?.id;
   const generation = identityGeneration;
@@ -350,7 +357,7 @@ export function scheduleCloudSync() {
 }
 
 function fromCustomer(row) {
-  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, emailFollowUps:Array.isArray(row.email_follow_ups)?row.email_follow_ups:[], phone:row.phone, lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60, listingCycleNotes:row.listing_cycle_notes||'', createdAt:row.created_at };
+  return { id:row.id, name:row.name, area:row.area, type:row.customer_type, address:row.address, contact:row.contact_name, role:row.contact_role, email:row.email, emailFollowUps:Array.isArray(row.email_follow_ups)?row.email_follow_ups:[], phone:row.phone, preferredSupplier:row.preferred_supplier??'', additionalContact:row.additional_contact??'', additionalPhone:row.additional_phone??'', additionalEmail:row.additional_email??'', lastVisit:row.last_visit, opportunity:row.opportunity, value:Number(row.opportunity_value)||0, lat:numberOrNull(row.latitude), lng:numberOrNull(row.longitude), menuChangeDate:row.menu_change_date, menuChangeMonth:row.menu_change_month||'', listingsReopenAt:row.listings_reopen_at, listingsReopenMonth:row.listings_reopen_month||'', listingReminderDays:Number(row.listing_reminder_days)||60, listingCycleNotes:row.listing_cycle_notes||'', createdAt:row.created_at };
 }
 
 function fromVisit(row) {
@@ -382,6 +389,7 @@ async function loadRemoteOrSeed() {
   try {
     assertCurrentIdentity(userId,generation);
     const interrupted=getLocalData();
+    upgradeCustomerFieldBaselines(interrupted);
     if (interrupted._syncPendingBase) {
       interrupted._syncBase=interrupted._syncPendingBase;
       delete interrupted._syncPendingBase;
@@ -569,6 +577,7 @@ function allLocalRows(workspace,userId){
 export async function reviewCloudDifferences(){
   const userId=session?.user?.id,generation=identityGeneration;
   if(!userId||syncing)throw new Error('Wait for sync to finish, then try again.');
+  upgradeCustomerFieldBaselines(getLocalData());
   const results=[];pendingDifferences.clear();
   for(const table of Object.keys(mappers)){
     const raw=(await readRows(table,userId)).data;

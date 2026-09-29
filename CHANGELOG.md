@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-29 — v21: preferred supplier and optional additional contact
+
+- Added optional Preferred supplier to client create/edit and Start Visit → Add new client. Added an expandable Additional contact section with independent name, phone and email fields. Partial details are allowed; existing values reopen visibly and can be corrected or cleared.
+- Client details show supplier and a separate additional-contact card. Customer and Start Visit searches include the additional contact and supplier. Primary contact details and all existing email, WhatsApp, PDF and phone-contact export recipients remain unchanged; the extra contact is not a silent fallback.
+- Customer forms retain typed values, checkbox choices and additional-section state through online/offline redraws. Invalid additional email opens its collapsed section for correction. Long supplier/contact values wrap on small screens.
+- Added four empty-default text columns to customers with matching field-length limits. Applied and verified in Supabase: all 13 existing customer rows retain the identical preexisting-data checksum; IDs, historical fields, timestamps, RLS and policies were not changed. No live CRM test records or messages were created.
+- Added both-way cloud mapping, field-level readback verification and backward-compatible defaults for old backups. Existing customer sync fingerprints gain only the historically absent empty fields, including interrupted-sync baselines; current local/cloud data is never used to fabricate a baseline. Actual competing edits still pause safely.
+- Tests: 60 automated tests and production build pass. Isolated 360px, 412px and 1280px browser workflows pass legacy edits, blank/partial fields, correction/clearing, email validation, both searches, redraw persistence, Start Visit Back/reopen/reload, visit completion, backup export/import, unchanged primary recipients, and retained historical visits/tasks/KM. Synthetic cloud tests cover upload/readback, each field's verification failure, retries, clearing, remote-only edits and genuine conflicts. Existing follow-up/email/PDF regression passes at all three sizes. No runtime exceptions observed.
+- Remaining scope: one additional contact per venue; choosing it as the PDF/WhatsApp recipient is not added. Full explicit cloud-workspace reload still closes open modals (existing behaviour). Security advisors show no new issue; the existing [disabled leaked-password protection warning](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection) remains. PWA cache advanced to v21.
+
 ## 2026-09-25 — v20: popup-free client WhatsApp handoff
 
 - Replaced the unchecked popup launch with a real, same-tab WhatsApp link in client details and the PDF panel. The selected client and international number stay visible; the link is refreshed when the client changes and validated again on the tap. No private notes, message text or PDF link is added to the chat URL.

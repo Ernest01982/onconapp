@@ -297,6 +297,11 @@ select.field { appearance: none; background: white; }
 .field-help, .modal-hint { display: block; margin: 7px 2px 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .modal-hint { margin: -5px 2px 14px; }
 .modal-hint.pdf-step { margin: 14px 2px 10px; font-size: 13px; }
+.additional-contact-form { margin: 8px 0 20px; }
+.additional-contact-form summary { min-height: 48px; padding: 14px 0; cursor: pointer; font-weight: 700; }
+.additional-contact-form .field-help { margin: 0 0 14px; }
+.info-card .info-line strong { overflow-wrap: anywhere; min-width: 0; }
+.additional-contact-card h3 { overflow-wrap: anywhere; }
 .readonly-field { min-height: 52px; padding: 15px 16px; border: 1px solid var(--line); border-radius: 17px; background: #eef2ef; font-weight: 760; }
 .listing-summary { display: flex; gap: 7px; margin: -2px 2px 10px; }
 .wine-relation { overflow: hidden; }

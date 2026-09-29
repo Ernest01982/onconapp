@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {fingerprint} from '../sync-safety.js';
 
 test('paused imports retain auth listeners and only retry on explicit Sync now',async()=>{
   let listener,attempts=0,status;
@@ -8,6 +9,7 @@ test('paused imports retain auth listeners and only retry on explicit Sync now',
   globalThis.__pausedImportClient={from(){throw new Error('No CRM request is allowed before import confirmation');},auth:{getSession:async()=>({data:{session}}),onAuthStateChange:callback=>{listener=callback;}}};
   const source=(await readFile(new URL('../cloud.js',import.meta.url),'utf8'))
     .replace("from './sync-safety.js'",'from '+JSON.stringify(new URL('../sync-safety.js',import.meta.url).href))
+    .replace("from './customer-fields.js'",'from '+JSON.stringify(new URL('../customer-fields.js',import.meta.url).href))
     .replace("import { createClient } from '@supabase/supabase-js';","const createClient=()=>globalThis.__pausedImportClient;")
     .replace('import.meta.env.VITE_SUPABASE_URL',"'https://test.invalid'")
     .replace('import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY',"'test-key'");
@@ -25,6 +27,7 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   const tables=Object.fromEntries(['profiles','customers','visits','tasks','products','customer_wines','travel_trips','app_state'].map(t=>[t,[]]));
   let version=0;
   let corruptAfterVisitWrite=false, corruptNextVisitRead=false;
+  let corruptCustomerField='',corruptNextCustomerRead=false;
   let editDuringStateWrite=null;
   const calls=[];
   class Query {
@@ -42,6 +45,7 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
         let result;
         if(this.operation==='read')result=matches;
         if(this.operation==='read' && this.table==='visits' && corruptNextVisitRead){result=matches.map(r=>({...r,raw_note:'Incorrect readback'}));corruptNextVisitRead=false;}
+        if(this.operation==='read' && this.table==='customers' && corruptNextCustomerRead){result=matches.map(r=>({...r,[corruptCustomerField]:'Incorrect customer readback'}));corruptNextCustomerRead=false;}
         if(this.operation==='insert'){
           const key=this.row.id?'id':'user_id';
           if(rows.some(r=>r[key]===this.row[key]))return Promise.resolve({error:{message:'Duplicate'},data:null}).then(resolve,reject);
@@ -49,6 +53,7 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
         }
         if(this.operation==='update'){result=matches.map(r=>Object.assign(r,structuredClone(this.row),{updated_at:'version-'+(++version)}));}
         if(this.operation==='update' && this.table==='visits' && corruptAfterVisitWrite)corruptNextVisitRead=true;
+        if(this.operation==='update' && this.table==='customers' && corruptCustomerField)corruptNextCustomerRead=true;
         if(this.operation==='update' && this.table==='app_state' && editDuringStateWrite){const edit=editDuringStateWrite;editDuringStateWrite=null;edit();}
         if(this.operation==='delete'){result=matches;tables[this.table]=rows.filter(r=>!matches.includes(r));}
         return Promise.resolve({data:structuredClone(this.single?result[0]||null:result),error:null}).then(resolve,reject);
@@ -58,6 +63,7 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   globalThis.__cloudTestClient={from:t=>new Query(t),auth:{getSession:async()=>({data:{session:{user:{id:'owner',email:'pilot@example.com'}}}}),onAuthStateChange:()=>{}}};
   const source=(await readFile(new URL('../cloud.js',import.meta.url),'utf8'))
     .replace("from './sync-safety.js'",'from '+JSON.stringify(new URL('../sync-safety.js',import.meta.url).href))
+    .replace("from './customer-fields.js'",'from '+JSON.stringify(new URL('../customer-fields.js',import.meta.url).href))
     .replace("import { createClient } from '@supabase/supabase-js';","const createClient=()=>globalThis.__cloudTestClient;")
     .replace('import.meta.env.VITE_SUPABASE_URL',"'https://test.invalid'")
     .replace('import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY',"'test-key'");
@@ -89,6 +95,70 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   assert.equal(workspace.visits[0].followUpTaskId,workspace.tasks[0].id);
   assert.equal(workspace.tasks[0].due,'2026-09-30T07:00:00Z');
   assert.equal(status.verifiedCounts.visits,1);
+  const customerFields={preferredSupplier:'preferred_supplier',additionalContact:'additional_contact',additionalPhone:'additional_phone',additionalEmail:'additional_email'};
+  const makeLegacyCustomerBase=()=>{
+    const baseline=workspace._syncBase.customers['account-1'];
+    const row=JSON.parse(baseline.fingerprint);
+    for(const field of Object.values(customerFields))delete row[field];
+    baseline.fingerprint=fingerprint(row);
+  };
+  // A v20 baseline without new columns must recognize a remote-only edit.
+  makeLegacyCustomerBase();
+  tables.customers[0].name='Remote rename';tables.customers[0].updated_at='remote-customer-version';
+  assert.equal(await cloud.refreshCloud(),true,status.error);
+  assert.equal(workspace.customers[0].name,'Remote rename');
+  // An interrupted v20 verification restores its upgraded historical baseline.
+  makeLegacyCustomerBase();workspace._syncPendingBase=structuredClone(workspace._syncBase);
+  workspace._syncBase.customers['account-1']={fingerprint:'unverified',version:'unverified'};
+  workspace.customers[0].preferredSupplier='Device supplier';
+  assert.equal(await cloud.refreshCloud(),true,status.error);
+  assert.equal(tables.customers[0].preferred_supplier,'Device supplier');
+  assert.equal(workspace._syncPendingBase,undefined);
+  assert.equal(workspace.customers[0].additionalContact,'');
+  const extraFields={preferredSupplier:'Namaqua',additionalContact:'Second buyer',additionalPhone:'+27 82 765 4321',additionalEmail:'second@example.invalid'};
+  Object.assign(workspace.customers[0],extraFields);
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
+  assert.equal(await cloud.refreshCloud(),true,status.error);
+  for(const [localField,databaseField] of Object.entries(customerFields)){
+    assert.equal(tables.customers[0][databaseField],extraFields[localField]);
+    assert.equal(workspace.customers[0][localField],extraFields[localField]);
+  }
+  const beforeIdempotent=calls.length;
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
+  assert.equal(calls.slice(beforeIdempotent).filter(call=>call.operation!=='read').length,0);
+  assert.equal(tables.customers.length,1);
+  // Every new field participates in readback verification; failed readback keeps local data.
+  for(const [localField,databaseField] of Object.entries(customerFields)){
+    const expected=localField==='additionalEmail'?'corrected@example.invalid':extraFields[localField]+' corrected';
+    workspace.customers[0][localField]=expected;
+    const lastVerified=status.lastSynced;
+    corruptCustomerField=databaseField;
+    assert.equal(await cloud.syncCloudNow(),false);
+    assert.match(status.error,/verification failed for customers/);
+    assert.equal(status.lastSynced,lastVerified);
+    assert.equal(workspace.customers[0][localField],expected);
+    corruptCustomerField='';
+    assert.equal(await cloud.syncCloudNow(),true,status.error);
+    assert.equal(tables.customers[0][databaseField],expected);
+  }
+  for(const localField of Object.keys(customerFields))workspace.customers[0][localField]='';
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
+  assert.equal(await cloud.refreshCloud(),true,status.error);
+  for(const [localField,databaseField] of Object.entries(customerFields)){
+    assert.equal(tables.customers[0][databaseField],'');assert.equal(workspace.customers[0][localField],'');
+  }
+  // The schema upgrade must not rebaseline genuinely competing edits.
+  makeLegacyCustomerBase();workspace.customers[0].additionalContact='Offline buyer';
+  tables.customers[0].additional_contact='Remote buyer';tables.customers[0].updated_at='competing-customer-version';
+  assert.equal(await cloud.syncCloudNow(),false);
+  assert.match(status.error,/customers has a different cloud copy/);
+  assert.equal(workspace.customers[0].additionalContact,'Offline buyer');
+  assert.equal(tables.customers[0].additional_contact,'Remote buyer');
+  const customerDifferences=await cloud.reviewCloudDifferences();
+  assert.equal(customerDifferences.length,1);
+  await cloud.resolveCloudDifference(customerDifferences[0].token,'device');
+  assert.equal(await cloud.syncCloudNow(),true,status.error);
+  assert.equal(tables.customers[0].additional_contact,'Offline buyer');
   const verifiedBefore=status.lastSynced;
   corruptAfterVisitWrite=true;
   workspace.visits[0].rawNote='Keep my complete device note';
