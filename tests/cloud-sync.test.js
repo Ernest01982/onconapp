@@ -96,10 +96,11 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   assert.equal(workspace.tasks[0].due,'2026-09-30T07:00:00Z');
   assert.equal(status.verifiedCounts.visits,1);
   const customerFields={preferredSupplier:'preferred_supplier',additionalContact:'additional_contact',additionalPhone:'additional_phone',additionalEmail:'additional_email'};
-  const makeLegacyCustomerBase=()=>{
+  const makeLegacyCustomerBase=(beforeEmailHistory=false)=>{
     const baseline=workspace._syncBase.customers['account-1'];
     const row=JSON.parse(baseline.fingerprint);
     for(const field of Object.values(customerFields))delete row[field];
+    if(beforeEmailHistory)delete row.email_follow_ups;
     baseline.fingerprint=fingerprint(row);
   };
   // A v20 baseline without new columns must recognize a remote-only edit.
@@ -107,8 +108,17 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   tables.customers[0].name='Remote rename';tables.customers[0].updated_at='remote-customer-version';
   assert.equal(await cloud.refreshCloud(),true,status.error);
   assert.equal(workspace.customers[0].name,'Remote rename');
+  // Match the real pre-Sep-17 mapper shape: it lacked email_follow_ups as well
+  // as v21's four columns. A remote-only correction must load without a write.
+  makeLegacyCustomerBase(true);
+  tables.customers[0].contact_name='Buyer corrected remotely';tables.customers[0].updated_at='remote-pre-email-correction';
+  const beforeLegacyRefresh=calls.length;
+  assert.equal(await cloud.refreshCloud(),true,status.error);
+  assert.equal(workspace.customers[0].contact,'Buyer corrected remotely');
+  assert.deepEqual(workspace.customers[0].emailFollowUps,[]);
+  assert.equal(calls.slice(beforeLegacyRefresh).filter(call=>call.table==='customers'&&call.operation!=='read').length,0);
   // An interrupted v20 verification restores its upgraded historical baseline.
-  makeLegacyCustomerBase();workspace._syncPendingBase=structuredClone(workspace._syncBase);
+  makeLegacyCustomerBase(true);workspace._syncPendingBase=structuredClone(workspace._syncBase);
   workspace._syncBase.customers['account-1']={fingerprint:'unverified',version:'unverified'};
   workspace.customers[0].preferredSupplier='Device supplier';
   assert.equal(await cloud.refreshCloud(),true,status.error);
@@ -148,7 +158,7 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
     assert.equal(tables.customers[0][databaseField],'');assert.equal(workspace.customers[0][localField],'');
   }
   // The schema upgrade must not rebaseline genuinely competing edits.
-  makeLegacyCustomerBase();workspace.customers[0].additionalContact='Offline buyer';
+  makeLegacyCustomerBase(true);workspace.customers[0].additionalContact='Offline buyer';
   tables.customers[0].additional_contact='Remote buyer';tables.customers[0].updated_at='competing-customer-version';
   assert.equal(await cloud.syncCloudNow(),false);
   assert.match(status.error,/customers has a different cloud copy/);

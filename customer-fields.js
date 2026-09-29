@@ -7,7 +7,13 @@ export const CUSTOMER_FIELD_LIMITS = Object.freeze({
   additionalEmail: 254
 });
 
-const databaseFields = ['preferred_supplier', 'additional_contact', 'additional_phone', 'additional_email'];
+const databaseDefaults = {
+  preferred_supplier: '',
+  additional_contact: '',
+  additional_phone: '',
+  additional_email: '',
+  email_follow_ups: []
+};
 const isRecord = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
 // Defaults must not trim or truncate imported/offline records.
@@ -17,7 +23,8 @@ export function normalizeCustomerFields(customer) {
   return normalized;
 }
 
-// v20 baselines predate these columns. Extend the saved historical row itself,
+// v20 baselines predate supplier/extra-contact columns; pre-September-17
+// baselines also predate email history. Extend only the saved historical row,
 // never the current device/cloud row, so real competing edits still conflict.
 export function upgradeCustomerFieldBaselines(workspace) {
   if (!isRecord(workspace)) return workspace;
@@ -31,8 +38,11 @@ export function upgradeCustomerFieldBaselines(workspace) {
         if (!isRecord(row) || row.id !== id || typeof row.user_id !== 'string' || !row.user_id || typeof row.name !== 'string') continue;
         if (fingerprint(row) !== baseline.fingerprint) continue;
         let changed = false;
-        for (const field of databaseFields) {
-          if (!Object.hasOwn(row, field)) { row[field] = ''; changed = true; }
+        for (const [field, defaultValue] of Object.entries(databaseDefaults)) {
+          if (!Object.hasOwn(row, field)) {
+            row[field] = Array.isArray(defaultValue) ? [...defaultValue] : defaultValue;
+            changed = true;
+          }
         }
         if (changed) baseline.fingerprint = fingerprint(row);
       } catch { /* Unknown/corrupt baselines stay untouched for safe conflict handling. */ }

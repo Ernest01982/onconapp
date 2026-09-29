@@ -241,6 +241,8 @@ select.field { appearance: none; background: white; }
 .offline-pill { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 720; }
 .offline-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #51a56e; }
 .offline-pill.offline::before { background: #e4a84a; }
+.sync-warning-link { min-height: 44px; border: 0; background: transparent; cursor: pointer; text-align: right; }
+.sync-warning-link::before { background: #e4a84a; flex-shrink: 0; }
 
 /* Incremental wine, follow-up and travel reporting controls. */
 .status.listed { background: #d8f5df; color: #17613b; }

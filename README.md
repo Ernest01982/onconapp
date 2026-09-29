@@ -1,5 +1,11 @@
 # FieldFlow
 
+### If sync needs attention (v22)
+
+Keep the phone workspace intact. Tap your initials → **Profile & backup → Export** and keep the downloaded backup. Tap the **Sync needs attention →** warning to see the exact error, then try **Sync now**. If it persists, use **Copy sync error** and share that message for diagnosis. Do not clear browser data or choose a cloud/device copy without reviewing the differences.
+
+v22 repairs a false comparison caused by older saved customer baselines predating email-history fields. It does not suppress real conflicts or automatically pick a winning record. A verified sync shows **Cloud verified** and readback totals.
+
 ### Preferred supplier and additional contact (v21)
 
 Open **Customers → Add client** or open a client → **Edit details**. Preferred supplier is optional. Expand **Additional contact (optional)** to save a second person's name, phone and email; enter only what you know. The same fields are available when adding a client from Start Visit.

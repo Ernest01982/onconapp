@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-29 — v22: historical sync comparison repair and clearer recovery
+
+- Reproduced an older-version false customer conflict using the actual September 10 row shape: historical sync fingerprints lack email_follow_ups. The v21 compatibility upgrade added only the four new client columns, leaving an unchanged device record looking modified when the cloud copy had a newer edit.
+- Extended only missing historical defaults with email_follow_ups: [] in current and interrupted-sync baselines. Existing history, values, timestamps/versions and invalid baselines remain untouched. No baseline is fabricated from current records; genuine competing edits still pause for explicit review.
+- Today’s online sync warning now opens Profile & backup. Added a read-only exact error and Copy sync error with manual-selection fallback. Retry displays the actual error rather than assuming a connection problem. Local-save failure and offline indicators retain priority.
+- Evidence: Supabase healthy; recent REST reads/authentication succeeded, with requests stopping around customer comparison and no failing write requests found. This is consistent with a client-side comparison stop, but the phone’s exact error/current workspace has not been supplied, so its specific cause and successful phone sync are not yet confirmed.
+- Data safety: no live CRM writes, schema/auth/RLS changes, forced reconciliation or deletions. Read-only before/after checks retain 13 cloud clients, 22 visits, 9 tasks, 6 wine links and 0 trips with unchanged latest modification times. Existing downloaded backup was inspected read-only for metadata, not imported over any live workspace.
+- Verification: 62 automated tests pass; production build passes. Isolated mocked-cloud browser test confirms old-baseline recovery without customer writes, retained visit note, true conflict protection, tappable warning, exact error copy/fallback, recovery backup, safe retry and both versions in review. New supplier/additional-contact mobile regression passes. No real account session or customer messages used in tests.
+- Known limits: a genuine record conflict or a phone-specific error still requires its exact details/backup, not blanket device/cloud replacement. A separate GPS/reimbursement decimal-rounding mismatch was reproduced during investigation and remains a follow-up issue; it does not match the observed customer-stage stop. PWA cache advanced to v22.
+
 ## 2026-09-29 — v21: preferred supplier and optional additional contact
 
 - Added optional Preferred supplier to client create/edit and Start Visit → Add new client. Added an expandable Additional contact section with independent name, phone and email fields. Partial details are allowed; existing values reopen visibly and can be corrected or cleared.
