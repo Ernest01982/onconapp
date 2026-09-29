@@ -13,6 +13,14 @@ test('message uses specific task contact and wine but not private CRM notes or r
  const w=fixture(),draft=followUpMessage(w,followUpContext(w,'t'));
  assert.match(draft.body,/Hi Manager/);assert.match(draft.body,/Test Chardonnay/);
  assert.doesNotMatch(draft.body,/Private|Buyer A/);assert.equal(draft.taskId,'t');
+ assert.equal(draft.subject,'Niew Beverages Follow-up - Alpha');
+ assert.match(draft.body,/Test Rep\nNiew Beverages$/);
+});
+test('company branding does not rename genuine Namaqua wine products',()=>{
+ const w=fixture();w.products[0].name='Namaqua Cabernet Sauvignon';
+ const draft=followUpMessage(w,followUpContext(w,'t'));
+ assert.match(draft.body,/about Namaqua Cabernet Sauvignon/);
+ assert.match(draft.body,/\nNiew Beverages$/);
 });
 test('edited device draft survives workspace normalization and client reassignment cannot reuse it',()=>{
  const w=fixture();w.followUpMessageDrafts=[{taskId:'t',customerId:'a',subject:'Edited',body:'My message'}];

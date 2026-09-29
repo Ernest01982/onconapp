@@ -53,8 +53,8 @@ export function buildEmailFollowUp({customer,visit=null,products=[],relationship
     const past=new Date((task?.due||visit?.followUp||visit?.followUpAt).slice(0,10)+'T23:59:59')<now;
     parts.push(past?'Our recorded follow-up date was '+followDate+'. I am getting back in touch now.':'I will be back in touch on '+followDate+'.');
   }
-  parts.push('Kind regards,\n'+line(profile.name||'Ernest Reyneke')+'\nNamaqua Wines');
-  const subject='Namaqua Wines Follow-up - '+venue;
+  parts.push('Kind regards,\n'+line(profile.name||'Ernest Reyneke')+'\nNiew Beverages');
+  const subject='Niew Beverages Follow-up - '+venue;
   const body=parts.join('\n\n');
   return {to,subject,body,customerId:customer.id,visitId:visit?.id||null,contactPerson:person,venue};
 }

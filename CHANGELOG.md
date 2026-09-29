@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-29 — v23: Niew Beverages communication identity
+
+- New contextual follow-up emails and follow-up message templates use Niew Beverages in subjects and signatures. Price-list sharing already uses Niew Beverages.
+- Preserved user-edited/saved drafts, sent communication history, genuine Namaqua product names, supplier PDF and login details. Existing drafts can be edited before sending; no CRM migration or live record changes.
+- Regression coverage checks company identity, recipient/encoding, preserved draft edits and genuine Namaqua wine names. PWA cache advanced to v23.
+
 ## 2026-09-29 — v22: historical sync comparison repair and clearer recovery
 
 - Reproduced an older-version false customer conflict using the actual September 10 row shape: historical sync fingerprints lack email_follow_ups. The v21 compatibility upgrade added only the four new client columns, leaving an unchanged device record looking modified when the cloud copy had a newer edit.

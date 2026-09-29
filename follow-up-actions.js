@@ -17,8 +17,8 @@ export function followUpMessage(workspace, context) {
   const person = task.contactPerson || customer?.contact || '';
   return {
     taskId:task.id, customerId:task.customerId,
-    subject:`Namaqua Wines Follow-up - ${customer?.name || 'Client'}`,
+    subject:`Niew Beverages Follow-up - ${customer?.name || 'Client'}`,
     // Private visit notes and internal follow-up reasons stay out of outgoing messages.
-    body:`Hi${person ? ' '+person.split(/\s+/)[0] : ''},\n\nI am following up${wine ? ' about '+wine.name : ''}.\n\nKind regards,\n${workspace.profile?.name || 'Ernest Reyneke'}\nNamaqua Wines`
+    body:`Hi${person ? ' '+person.split(/\s+/)[0] : ''},\n\nI am following up${wine ? ' about '+wine.name : ''}.\n\nKind regards,\n${workspace.profile?.name || 'Ernest Reyneke'}\nNiew Beverages`
   };
 }

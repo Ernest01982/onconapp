@@ -9,7 +9,7 @@ test('contextual draft has correctly encoded recipient, subject, line breaks and
  const draft=buildEmailFollowUp({customer,visit,products,profile:{name:'Ernest Reyneke'},now});
  const url=new URL(followUpMailto(draft));
  assert.equal(decodeURIComponent(url.pathname),customer.email);
- assert.equal(url.searchParams.get('subject'),"Namaqua Wines Follow-up - O'Connor's Café & Grill");
+ assert.equal(url.searchParams.get('subject'),"Niew Beverages Follow-up - O'Connor's Café & Grill");
  assert.match(draft.body,/Hi Quinton,/);
  assert.match(draft.body,/see me today/);
  assert.match(draft.body,/Wines of interest:\n- Sauvignon Blanc/);
@@ -17,7 +17,7 @@ test('contextual draft has correctly encoded recipient, subject, line breaks and
  assert.match(draft.body,/Samples promised:\nI will bring Chenin samples next week/);
  assert.match(draft.body,/Send prices & arrange tasting/);
  assert.match(draft.body,/25 Sept? 2026/);
- assert.match(draft.body,/Ernest Reyneke\nNamaqua Wines/);
+ assert.match(draft.body,/Ernest Reyneke\nNiew Beverages/);
  assert.doesNotMatch(draft.body,/Internal margin/);
  assert.ok(url.searchParams.get('body').includes('\r\n'));
 });
