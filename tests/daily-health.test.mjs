@@ -14,7 +14,7 @@ test('baseline compatibility extends only history and keeps genuine remote edits
  const raw={id:'t',user_id:'u',distance_km:12.345678,reimbursement:12.3*4.9,notes:'before'};
  const workspace={_syncBase:{travel_trips:{t:{fingerprint:fingerprint(raw),version:'v1'}}}};
  upgradeReliabilityBaselines(workspace);const base=workspace._syncBase.travel_trips.t;
- const unchanged={...canonicalTripRow(raw),recording_flags:[]};
+ const unchanged={...canonicalTripRow(raw),recording_flags:[],daily_log:{}};
  assert.equal(base.fingerprint,fingerprint(unchanged));assert.equal(base.version,'v1');
  assert.equal(syncDecision(unchanged,{row:{...unchanged,notes:'cloud'},version:'v2'},base),'remote');
  assert.equal(syncDecision({...unchanged,notes:'phone'},{row:{...unchanged,notes:'cloud'},version:'v2'},base),'conflict');

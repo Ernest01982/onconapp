@@ -208,7 +208,8 @@ function tripRow(item, userId) {
     end_odometer: numberOrNull(item.endOdometer),
     notes: item.notes || '',
     distance_source: item.distanceSource || 'gps',
-    recording_flags: item.recordingFlags || []
+    recording_flags: item.recordingFlags || [],
+    daily_log: item.dailyLog || {}
   });
 }
 
@@ -381,7 +382,7 @@ function fromProduct(row) {
 }
 
 function fromTrip(row) {
-  return { id:row.id, start:row.started_at, end:row.ended_at, points:row.points||[], fromCustomerId:row.from_customer_id, toCustomerId:row.to_customer_id, fromLabel:row.from_label, toLabel:row.to_label, distanceKm:Number(row.distance_km)||0, ratePerKm:Number(row.rate_per_km??4.9), reimbursement:Number(row.reimbursement)||0, customerId:row.customer_id, purpose:row.purpose||'Business travel', startOdometer:numberOrNull(row.start_odometer), endOdometer:numberOrNull(row.end_odometer), notes:row.notes||'', distanceSource:row.distance_source||'gps', recordingFlags:row.recording_flags||[] };
+  return { id:row.id, start:row.started_at, end:row.ended_at, points:row.points||[], fromCustomerId:row.from_customer_id, toCustomerId:row.to_customer_id, fromLabel:row.from_label, toLabel:row.to_label, distanceKm:Number(row.distance_km)||0, ratePerKm:Number(row.rate_per_km??4.9), reimbursement:Number(row.reimbursement)||0, customerId:row.customer_id, purpose:row.purpose||'Business travel', startOdometer:numberOrNull(row.start_odometer), endOdometer:numberOrNull(row.end_odometer), notes:row.notes||'', distanceSource:row.distance_source||'gps', recordingFlags:row.recording_flags||[], dailyLog:row.daily_log||{} };
 }
 
 async function loadRemoteOrSeed() {

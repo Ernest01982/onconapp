@@ -1,3 +1,4 @@
+import {claimTrips} from './daily-mileage.js';
 import { isInRange } from './domain.js';
 
 export function formatTradeTime(minutes) {
@@ -8,7 +9,7 @@ export function formatTradeTime(minutes) {
 
 export function activityMetrics(workspace, range) {
   const visits = workspace.visits.filter(v => v.end && isInRange(v.start, range));
-  const trips = workspace.travel.trips.filter(t => isInRange(t.start, range));
+  const trips = claimTrips(workspace.travel.trips).filter(t => isInRange(t.start, range));
   const tasksDue = workspace.tasks.filter(t => isInRange(t.due, range));
   const tasksCompleted = workspace.tasks.filter(t => t.done && t.completedAt && isInRange(t.completedAt, range));
   // Unknown completion dates are not the same as due dates. Keep originals intact.

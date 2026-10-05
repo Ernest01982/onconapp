@@ -200,9 +200,10 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   await cloud.resolveCloudDifference(differences[0].token,'device');
   assert.equal(await cloud.syncCloudNow(),true,status.error);
   assert.equal(tables.visits[0].raw_note,'Device correction');
-  workspace.travel.trips=[{id:'decimal-trip',start:'2026-09-29T08:00:00Z',end:'2026-09-29T09:00:00Z',distanceKm:12.345678,ratePerKm:4.9,reimbursement:12.3*4.9,recordingFlags:['GPS gap']}];
+  workspace.travel.trips=[{id:'decimal-trip',start:'2026-09-29T08:00:00Z',end:'2026-09-29T09:00:00Z',distanceKm:12.345678,ratePerKm:4.9,reimbursement:12.3*4.9,recordingFlags:['GPS gap'],dailyLog:{date:'2026-09-29',privateKm:2,totalKm:14.3}}];
   workspace.visits[0].timeCorrections=[{at:'2026-09-29T09:00:00Z',reason:'Confirmed times',before:{start:'2026-09-10T09:00:00Z',end:'2026-09-11T10:00:00Z'},after:{start:workspace.visits[0].start,end:workspace.visits[0].end}}];
   workspace.visits[0].locationCapture={source:'venue-fallback'};
+  workspace.travel.activeTrip={id:'day-2026-10-05',dailyLog:{date:'2026-10-05'},startOdometer:1234.5,ratePerKm:4.9,points:[]};
   assert.equal(await cloud.syncCloudNow(),true,status.error);
   assert.equal(tables.travel_trips[0].distance_km,12.346);
   assert.equal(tables.travel_trips[0].reimbursement,60.27);
@@ -211,6 +212,9 @@ test('cloud workflow preserves full notes, offline edits, new remote records and
   assert.equal(workspace.visits[0].timeCorrections[0].reason,'Confirmed times');
   assert.equal(workspace.visits[0].locationCapture.source,'venue-fallback');
   assert.deepEqual(workspace.travel.trips[0].recordingFlags,['GPS gap']);
+  assert.deepEqual(workspace.travel.trips[0].dailyLog,{date:'2026-09-29',privateKm:2,totalKm:14.3});
+  assert.equal(workspace.travel.activeTrip.startOdometer,1234.5);
+  assert.equal(workspace.travel.activeTrip.dailyLog.date,'2026-10-05');
   assert.equal(await cloud.syncCloudNow(),true,status.error);
   workspace.visits=[];
   assert.equal(await cloud.syncCloudNow(),true,status.error);

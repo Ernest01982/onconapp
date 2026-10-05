@@ -1,5 +1,15 @@
 # FieldFlow
 
+### Daily odometer and navigation (v25)
+
+Open **Today → KM/reimbursement card → Travel & mileage → Start day**. Enter the date and starting odometer, then save. At the end, use **Finish day** and enter the ending reading plus private/non-business KM. Check the calculation and confirm. Start/end readings must cover the same chosen date. If completing yesterday later, use yesterday's end reading, not today's current odometer. Previous days are supported; future dates are not.
+
+The saved rate is fixed when the day starts. **Review / edit today**, or **Edit** in claim history, updates the same daily record. The daily total covers that whole date: individual trips remain under **Supporting trips**, excluded from totals to prevent duplicate claims. Daily KM stays unallocated by client. This version supports one vehicle/day; do not combine readings from different vehicles. You must exclude non-business travel yourself.
+
+Open a client → **Navigate · Google Maps**. FieldFlow uses the saved pin, or otherwise the name/address/area. Check the destination in Maps before driving, especially older saved pins. Navigation requires no API key and does not send notes or contact details. Save a venue's location while there to improve the next navigation. The odometer day remains open while using other apps; it does not need background GPS.
+
+Keep a backup before updating and check **Cloud verified** after saving. Daily total/private KM appear in KM and management CSV exports. Existing records are retained; daily claims deliberately supersede same-date trip totals.
+
 ### Daily reliability check (v24)
 
 Before updating on your phone, export and keep a backup; never clear browser storage. Open **Today → Daily check** to compare this device with the latest verified cloud counts/time and inspect unfinished work, overdue follow-ups, missing details and suspect visit/travel times. Confirm a backup only after checking the downloaded file exists, and keep a copy off the phone. Pending changes still need a successful **Cloud verified** sync; matching counts alone do not prove the contents match.

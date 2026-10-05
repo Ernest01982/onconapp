@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-05 — v25: daily odometer and client navigation
+
+- Travel & mileage now offers Start day / Finish day with date, start/end odometer, private KM, purpose, locations and notes. Open days persist offline and through sync; visits do not finish them or start GPS. Previous dates can be captured, but future dates and impossible readings are rejected.
+- Business KM = end minus start minus private KM; reimbursement keeps the rate saved when the day started. Confirmation shows the calculation. Editing reuses the same day ID. Daily records represent date boundaries, not measured departure/arrival times; their cards say Start/End reading.
+- Completed daily logs take priority over individual trips for the same South African date in Today, travel reports, management exports and assistant mileage totals. Supporting trips remain available and unchanged, but are not added to claims. Daily distance is not guessed per client. Daily private/total KM are included in CSV exports.
+- Client details now offer Navigate · Google Maps using a saved pin or encoded address/area. Only the destination is sent, not CRM notes/contact details. Missing destinations and unsaved-work errors block navigation. This is an external Maps handoff, not an embedded map or background tracking.
+- Added bounded daily_log JSON to travel_trips, without changing existing records, authentication or RLS. Active readings use the existing synced active-trip field. Historical fingerprints gain only the missing empty default. Live before/after verification found 0 trips, unchanged; no synthetic live CRM writes were made.
+- Verification: 73 automated tests pass, including cloud readback for completed/open days, daily calculations, duplicate prevention, date boundaries and encoded navigation. Isolated 360/412/1280px workflows pass start/reopen, visit integration, invalid readings, finish/edit, CSV and no double-counting; screenshots reviewed. Production build passes. PWA cache v25.
+- Limits: one odometer log per date for one vehicle; exclude private/non-business travel yourself. No automatic route distance, embedded map, background GPS or phone notifications added. Cloud verification on the actual phone still needs checking. Existing leaked-password-protection warning remains unchanged.
+
 ## 2026-09-29 — v24: daily reliability and audit repairs
 
 - Added Today → Daily check: device versus last verified cloud totals/time, pending changes, manual backup-file confirmation, unfinished work, overdue tasks, suspect visit times, missing contacts/listing-cycle details and flagged GPS trips. Matching counts are not described as proof of matching contents.

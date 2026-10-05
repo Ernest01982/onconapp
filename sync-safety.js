@@ -22,7 +22,7 @@ export function upgradeReliabilityBaselines(workspace) {
       try {
         let row=JSON.parse(base.fingerprint);
         if (!row || row.id!==id || typeof row.user_id!=='string' || !row.user_id || fingerprint(row)!==base.fingerprint) continue;
-        const defaults=table==='visits'?{time_corrections:[],location_capture:{}}:{recording_flags:[]};
+        const defaults=table==='visits'?{time_corrections:[],location_capture:{}}:{recording_flags:[],daily_log:{}};
         for(const [field,value] of Object.entries(defaults)) if(!Object.hasOwn(row,field)) row[field]=value;
         if(table==='travel_trips')row=canonicalTripRow(row);
         base.fingerprint=fingerprint(row);
