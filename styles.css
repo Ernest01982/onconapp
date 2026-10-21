@@ -380,3 +380,39 @@ select.field { appearance: none; background: white; }
 .health-counts{min-width:0;table-layout:fixed}.health-counts th,.health-counts td{padding:10px 7px;overflow-wrap:anywhere}
 .recipient-choice{margin:12px 0}.recipient-choice select{width:100%} .location-state[hidden]{display:none}
 .report-actions{flex-wrap:wrap}.report-actions button{white-space:normal}
+/* Small, touch-friendly additions to the existing visit and client screens. */
+.batch-select,.batch-check { display:flex;align-items:center;gap:10px;min-height:48px;cursor:pointer; }
+.batch-select input,.batch-check input,.wine-multi-row input { width:22px;height:22px;flex:0 0 22px;accent-color:var(--ink); }
+.wine-multi-row { display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--line);border-radius:14px;min-height:64px;background:white;cursor:pointer; }
+.wine-multi-row strong,.wine-multi-row small { display:block; }
+.wine-multi-row span { flex:1;min-width:0; }
+.wine-multi-row small { color:var(--muted);margin-top:4px; }
+.picker-footer { position:sticky;bottom:0;padding:12px 0 max(12px,env(safe-area-inset-bottom));background:var(--paper,#fff);border-top:1px solid var(--line); }
+.photo-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0; }
+.photo-grid article { min-width:0;border:1px solid var(--line);border-radius:12px;padding:8px;background:white; }
+.photo-grid article>span { display:block;font-size:12px;line-height:1.5;margin-top:6px; }
+.photo-thumb { display:block;width:100%;height:150px;padding:0;border:0;background:#eef2ef;border-radius:8px;overflow:hidden;cursor:pointer; }
+.photo-thumb img { display:block;width:100%;height:100%;object-fit:contain; }
+.photo-preview { margin:20px 0;padding:12px;border:1px solid var(--line);border-radius:12px; }
+.photo-preview img { display:block;width:100%;height:auto;margin:12px 0; }
+.photo-preview[hidden] { display:none; }
+.photo-status { padding:12px;background:var(--mint,#eff7f0);border-radius:12px;overflow-wrap:anywhere; }
+.photo-modal summary,.pdf-fallback summary { cursor:pointer;min-height:48px;padding:14px 0;font-weight:700; }
+.photo-modal details p { line-height:1.5;font-size:14px; }
+.photo-modal .customer-actions label { white-space:normal; }
+.photo-modal .btn { text-align:center; }
+@media(max-width:480px) {
+ .visit-wine-row { flex-wrap:wrap; }
+ .visit-wine-row .list-card-main { flex:1 1 calc(100% - 66px); }
+ .visit-wine-row .compact-field { flex:1 1 100%;max-width:none; }
+ .photo-modal .customer-actions>* { flex:1 1 100%; }
+}
+.visit-wine-row { grid-template-columns:36px minmax(0,1fr) minmax(125px,.8fr) auto 44px; }
+.visit-wine-row .batch-select { grid-column:1;grid-row:1; }
+@media(max-width:540px) {
+ .visit-wine-row { grid-template-columns:36px minmax(0,1fr) 44px!important; }
+ .visit-wine-row .list-card-main { grid-column:2;grid-row:1; }
+ .visit-wine-row .close-btn { grid-column:3;grid-row:1; }
+ .visit-wine-row .compact-field { grid-column:1/-1;grid-row:2; }
+ .visit-wine-row .sample-check { grid-column:1/-1;grid-row:3; }
+}

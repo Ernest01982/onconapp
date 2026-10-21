@@ -10,7 +10,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.57.4"
+    "@supabase/supabase-js": "2.57.4",
+    "pdfjs-dist": "6.4.299"
   },
   "devDependencies": {
     "vite": "7.3.6"

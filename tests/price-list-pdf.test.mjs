@@ -10,7 +10,7 @@ test('offline installer deduplicates relative/absolute URLs and includes the sup
     URL,
     self:{location:{href:'https://example.test/onconapp/sw.js',origin:'https://example.test'},addEventListener:(event,handler)=>{listeners[event]=handler;},skipWaiting:()=>{installed=true;}},
     caches:{open:async()=>({put:async()=>{},addAll:async list=>{urls=list;}})},
-    fetch:async()=>({clone:()=>({text:async()=>'<link href="./icon.svg"><link href="manifest.json"><script src="./assets/app.js"></script>'})})
+    fetch:async url=>url.includes('offline-assets')?{ok:true,json:async()=>['assets/app.js','assets/pdf.worker.mjs','assets/jbig2.wasm']}:{clone:()=>({text:async()=>'<link href="./icon.svg"><link href="manifest.json"><script src="./assets/app.js"></script>'})}
   });
   let install;
   listeners.install({waitUntil:promise=>{install=promise;}});
@@ -19,6 +19,8 @@ test('offline installer deduplicates relative/absolute URLs and includes the sup
   assert.equal(new Set(urls).size,urls.length);
   assert.equal(urls.filter(url=>url.endsWith('/icon.svg')).length,1);
   assert.ok(urls.includes('https://example.test/onconapp/niewbev-on-con-2026-08-01.pdf'));
+  assert.ok(urls.includes('https://example.test/onconapp/assets/pdf.worker.mjs'));
+  assert.ok(urls.includes('https://example.test/onconapp/assets/jbig2.wasm'));
 });
 import { loadPriceListPdf, canSharePdf, sharePriceListPdf, PRICE_LIST_PDF_NAME } from '../price-list-pdf.js';
 

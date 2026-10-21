@@ -32,6 +32,15 @@ let sessionChangeChain = Promise.resolve();
 
 class StaleIdentityError extends Error {}
 
+// Scoped capability for the independent private photo library. Every async
+// continuation must recheck this captured identity before using its result.
+export function getPhotoAccess() {
+  const userId=session?.user?.id,generation=identityGeneration;
+  if(!userId||!client)throw new Error('Sign in before adding wine-list photos. Existing device-only CRM data stays unchanged.');
+  assertCurrentIdentity(userId,generation);
+  return {userId,client,check:()=>assertCurrentIdentity(userId,generation)};
+}
+
 function assertCurrentIdentity(userId, generation) {
   if (!identityReady || activeUserId !== userId || identityGeneration !== generation) throw new StaleIdentityError();
 }

@@ -1,17 +1,20 @@
-const CACHE = 'fieldflow-v25';
+const CACHE = 'fieldflow-v26';
 const ASSETS = ['./', './index.html', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png', './icon-512-maskable.png', './niewbev-on-con-2026-08-01.pdf'];
 
 async function cacheAppShell() {
   const cache = await caches.open(CACHE);
   const indexResponse = await fetch('./index.html', { cache:'reload' });
   const html = await indexResponse.clone().text();
+  const manifestResponse = await fetch('./offline-assets.json', {cache:'reload'});
+  if(!manifestResponse.ok)throw Error('Offline asset list unavailable');
+  const builtAssets = await manifestResponse.json();
   const linkedAssets = [...html.matchAll(/(?:src|href)=["']([^"']+)["']/g)]
     .map(match => new URL(match[1], self.location.href))
     .filter(url => url.origin === self.location.origin)
     .map(url => url.href);
   await cache.put('./index.html', indexResponse);
   // Resolve first: relative and absolute references can identify the same file.
-  const assetUrls = [...new Set([...ASSETS, ...linkedAssets].map(path => new URL(path, self.location.href).href))];
+  const assetUrls = [...new Set([...ASSETS, ...linkedAssets, ...builtAssets].map(path => new URL(path, self.location.href).href))];
   await cache.addAll(assetUrls);
 }
 
